@@ -79,17 +79,16 @@ describe('Batch 2 crafthelm start & crafthelm status', () => {
       assert.equal(c1.acceptance.some((a) => a.kind === 'e2e'), false);
       assert.deepEqual(c1.scope.allow, ['src/**']);
 
-      // 3) Overwriting with explicit --e2e-cmd yields policy_ready=true and contract approve command
-      const s2 = startTask({
-        repo,
-        host: 'generic',
-        taskId: 'CH-T001',
-        overwrite: true,
-        request: 'Fix token comparison bug',
-        changeKind: 'bugfix',
-        e2eCommand: 'npm run test:e2e',
-        scopeAllow: ['src/**'],
+      // Follow the emitted repair command from the CLI checkout, targeting another repo.
+      assert.match(s1.next_command, /contract add-e2e /);
+      const followup = spawnSync(s1.next_command, {
+        cwd: CRAFTHELM_ROOT, shell: true, encoding: 'utf8', windowsHide: true,
       });
+      assert.equal(followup.status, 0, followup.stderr);
+      const s2 = JSON.parse(followup.stdout);
+      const amended = JSON.parse(fs.readFileSync(s1.contract_path, 'utf8'));
+      assert.equal(amended.change_kind, 'bugfix');
+      assert.deepEqual(amended.scope, c1.scope);
       assert.equal(s2.ok, true);
       assert.equal(s2.policy_ready, true);
       assert.match(s2.next_command, /contract approve/);

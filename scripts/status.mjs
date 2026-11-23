@@ -100,14 +100,20 @@ export function recommendNextActionForRun(runSummary, repoArg = '.') {
 
 function recommendForPendingContract(contractInfo, repoArg) {
   const repoFlag = quoteArg(repoArg);
-  const contractPath = quoteArg(contractInfo.contract_path);
+  const contractPath = quoteArg(toPosixPath(path.resolve(repoArg, contractInfo.contract_path)));
+  if (contractInfo.warnings.some(w => w.code === 'E2E_MISSING')) {
+    return {
+      next_action: `계약(${contractInfo.task_id})에 실행 가능한 E2E 인수 기준을 추가하세요.`,
+      next_command: `node scripts/crafthelm.mjs contract add-e2e ${contractPath} --e2e-cmd "<E2E 명령>"`,
+    };
+  }
+  if (!contractInfo.policy_ready) {
+    return {
+      next_action: contractInfo.warnings.map(w => w.guidance).join(' '),
+      next_command: `node scripts/crafthelm.mjs contract validate ${contractPath}`,
+    };
+  }
   if (!contractInfo.contract_approved) {
-    if (!contractInfo.policy_ready) {
-      return {
-        next_action: `계약(${contractInfo.task_id})에 E2E 인수 기준이 없습니다. --e2e-cmd로 보완한 뒤 계약을 승인하세요.`,
-        next_command: `node scripts/crafthelm.mjs start "<작업 설명>" --repo ${repoFlag} --task-id ${contractInfo.task_id} --overwrite --e2e-cmd "<E2E 명령>"`,
-      };
-    }
     return {
       next_action: `계약(${contractInfo.task_id})의 스키마·정책 준비가 끝났습니다. 명시적으로 계약을 승인하세요.`,
       next_command: `node scripts/crafthelm.mjs contract approve ${contractPath} --actor operator`,

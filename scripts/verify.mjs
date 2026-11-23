@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { peerArtifactHashes } from './lib/task-artifacts.mjs';
 import path from 'node:path';
 import { summarizeDelegations } from './delegate.mjs';
 import { assessEvidenceStrength } from './lib/evidence-strength.mjs';
@@ -435,10 +436,15 @@ export function runVerify(options) {
   // Scope & protected path analysis
   const rawChangedFiles = isGitRepo(repoRoot) ? getChangedFiles(repoRoot, checkpoint.baseline_git_head) : [];
   const baselineCraftHelm = checkpoint.baseline_crafthelm_files ?? {};
+  const peerHashes = peerArtifactHashes(repoRoot, checkpoint.task_id);
   const changedFiles = rawChangedFiles.filter((rel) => {
-    if (!Object.hasOwn(baselineCraftHelm, rel)) return true;
+    // A sibling task must never exempt changes to this run's own or protected files.
+    const baseline = Object.hasOwn(baselineCraftHelm, rel)
+      ? baselineCraftHelm[rel]
+      : !matchesAnyGlob(rel, contract.scope.protect) && peerHashes.get(rel);
+    if (!baseline) return true;
     const abs = path.join(repoRoot, rel);
-    return !fs.existsSync(abs) || sha256File(abs) !== baselineCraftHelm[rel];
+    return !fs.existsSync(abs) || sha256File(abs) !== baseline;
   });
 
   const outOfScopeFiles = changedFiles.filter((rel) => !matchesAnyGlob(rel, contract.scope.allow));

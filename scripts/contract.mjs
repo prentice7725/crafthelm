@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
-import { sha256CanonicalJson } from './lib/crypto.mjs';
+import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
+import { getContractPath } from './lib/paths.mjs';
+import { readTaskReceipt, withTaskWrite, writeAtomic, writeTaskReceipt } from './lib/task-artifacts.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
 import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } from './lib/lite-profile.mjs';
 import { composeMethodologyPlan } from './lib/methodology.mjs';
@@ -30,7 +32,7 @@ export function checkContractReadiness(contract) {
 
   if (requiresE2e) {
     const acceptance = Array.isArray(contract?.acceptance) ? contract.acceptance : [];
-    const hasE2e = acceptance.some((ac) => ac && ac.kind === 'e2e');
+    const hasE2e = acceptance.some((ac) => ac?.kind === 'e2e' && ac.applicable !== false);
     if (!hasE2e) {
       warnings.push({
         code: 'E2E_MISSING',
@@ -91,10 +93,13 @@ export function planFromContract(contractPath) {
  * @param {{ strictReadiness?: boolean, channel?: 'programmatic'|'agent_session'|'interactive_terminal'|'non_interactive' }} [options]
  */
 export function approveContractFile(contractPath, actor, options = {}) {
+  return withContractWrite(contractPath, file => approveContract(file, actor, options));
+}
+
+function approveContract(absPath, actor, options) {
   if (!actor || !String(actor).trim()) {
     throw new Error('Explicit --actor is required to approve an execution contract.');
   }
-  const absPath = path.resolve(contractPath);
   const contract = JSON.parse(fs.readFileSync(absPath, 'utf8'));
   assertValidSchema('execution', contract, absPath);
 
@@ -113,7 +118,7 @@ export function approveContractFile(contractPath, actor, options = {}) {
   };
 
   assertValidSchema('execution', contract, absPath);
-  fs.writeFileSync(absPath, `${JSON.stringify(contract, null, 2)}\n`, 'utf8');
+  persistContract(absPath, contract);
 
   return {
     ok: true,
@@ -129,6 +134,94 @@ export function approveContractFile(contractPath, actor, options = {}) {
   };
 }
 
+function withContractWrite(contractPath, action) {
+  const file = path.resolve(contractPath);
+  const repo = path.resolve(path.dirname(file), '../..');
+  const taskId = path.basename(file, '.json');
+  if (getContractPath(repo, taskId) !== file) return action(file);
+  return withTaskWrite(repo, taskId, () => action(file));
+}
+
+function persistContract(file, contract, updatedDocHash) {
+  const text = `${JSON.stringify(contract, null, 2)}\n`;
+  const repo = path.resolve(path.dirname(file), '../..');
+  if (getContractPath(repo, contract.task_id) === file) {
+    const receipt = readTaskReceipt(repo, contract.task_id);
+    if (receipt) {
+      // Approving or amending a manually edited contract does not turn the
+      // pre-existing edits into generated output for a different task.
+      if (receipt.contract === sha256File(file)) receipt.contract = sha256Text(text);
+      if (updatedDocHash) receipt.docs['acceptance.md'] = updatedDocHash;
+      writeTaskReceipt(repo, contract.task_id, receipt);
+    }
+  }
+  writeAtomic(file, text);
+}
+
+function appendAcceptanceRow(file, taskId, ac, docsDir) {
+  const repo = path.resolve(path.dirname(file), '../..');
+  if (getContractPath(repo, taskId) !== file) return;
+  const receipt = readTaskReceipt(repo, taskId);
+  const preferredDir = docsDir ?? receipt?.docs_dir;
+  const dirs = preferredDir !== undefined ? [preferredDir] : [`docs/tasks/${taskId}`, 'docs'];
+  for (const dir of dirs) {
+    const doc = path.join(repo, dir, 'acceptance.md');
+    if (!fs.existsSync(doc)) continue;
+    const old = fs.readFileSync(doc, 'utf8');
+    const lines = old.split(/\r?\n/);
+    if (lines[0] !== `# Acceptance Criteria — ${taskId}`) continue;
+    const row = `| ${ac.id} | ${ac.requirement} | e2e | \`${ac.command}\` | exit 0 |`;
+    if (lines.includes(row)) {
+      // Recover a previous interrupted append without claiming unrelated edits.
+      lines.splice(lines.indexOf(row), 1);
+      return receipt?.docs['acceptance.md'] === sha256Text(lines.join('\n')) ? sha256Text(old) : undefined;
+    }
+    let end = lines.findIndex(line => line.startsWith('| AC ID |'));
+    if (end < 0) throw new Error(`Cannot locate the acceptance table in ${doc}.`);
+    while (lines[end]?.startsWith('|')) end++;
+    lines.splice(end, 0, row);
+    const next = lines.join('\n');
+    writeAtomic(doc, next);
+    if (receipt?.docs['acceptance.md'] === sha256Text(old)) return sha256Text(next);
+    return;
+  }
+}
+
+/** Amend a saved contract without reconstructing it from onboarding defaults. */
+export function addE2eCriterion(contractPath, command, options = {}) {
+  if (typeof command !== 'string' || !command.trim()) throw new Error('A non-empty --e2e-cmd is required.');
+  return withContractWrite(contractPath, file => amendE2e(file, command.trim(), options));
+}
+
+function amendE2e(file, command, options) {
+  const contract = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assertValidSchema('execution', contract, file);
+  const existing = contract.acceptance.find(ac => ac.kind === 'e2e' && ac.applicable !== false && ac.command === command);
+  if (!existing) {
+    let n = 1;
+    const ids = new Set(contract.acceptance.map(ac => ac.id));
+    while (ids.has(`AC-${String(n).padStart(2, '0')}`)) n++;
+    const ac = {
+      id: `AC-${String(n).padStart(2, '0')}`, requirement: contract.acceptance[0].requirement,
+      kind: 'e2e', command, expected_exit_code: 0,
+    };
+    contract.acceptance.push(ac);
+    contract.approval = { require_on: contract.approval.require_on, contract_approved: false };
+    assertValidSchema('execution', contract, file);
+    const updatedDocHash = appendAcceptanceRow(file, contract.task_id, ac, options.docsDir);
+    persistContract(file, contract, updatedDocHash);
+  }
+  const readiness = checkContractReadiness(contract);
+  const needsApproval = readiness.policy_ready && !contract.approval.contract_approved;
+  const nextCommand = needsApproval
+    ? `node scripts/crafthelm.mjs contract approve "${file}" --actor operator`
+    : `node scripts/crafthelm.mjs contract validate "${file}"`;
+  return {
+    ok: true, contract_path: file, task_id: contract.task_id, ...readiness,
+    next_command: nextCommand,
+  };
+}
+
 function printUsage() {
   process.stdout.write(
     [
@@ -137,6 +230,7 @@ function printUsage() {
       'Usage:',
       '  contract.mjs validate <contractPath>',
       '  contract.mjs plan     <contractPath>',
+      '  contract.mjs add-e2e  <contractPath> --e2e-cmd "<command>" [--docs-dir <dir>]',
       '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--init-run [--repo <path>] [--run-id <id>]]',
       '',
       '  --init-run   After approval, also freeze the run baseline (checkpoint init). Implies --strict.',
@@ -172,30 +266,36 @@ if (isMainModule(import.meta.url)) {
         )}\n`,
       );
       process.exit(res.valid ? 0 : 1);
+    } else if (subcommand === 'add-e2e') {
+      const res = addE2eCriterion(target, args['e2e-cmd'], { docsDir: args['docs-dir'] });
+      process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'plan') {
       const res = planFromContract(target);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'approve') {
-      const res = approveContractFile(target, args.actor, {
+      const approve = () => approveContractFile(target, args.actor, {
         strictReadiness: Boolean(args.strict) || Boolean(args['init-run']),
         channel: classifyApprovalChannel(),
       });
-      for (const w of res.warnings ?? []) {
-        process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
-      }
+      let res;
       if (args['init-run']) {
-        const { initCheckpoint } = await import('./checkpoint.mjs');
-        const cp = initCheckpoint({
-          repo: typeof args.repo === 'string' ? args.repo : '.',
-          contract: res.contract_path,
-          runId: typeof args['run-id'] === 'string' ? args['run-id'] : undefined,
+        const { withNewRun } = await import('./checkpoint.mjs');
+        const repo = typeof args.repo === 'string' ? args.repo : '.';
+        const runId = typeof args['run-id'] === 'string' ? args['run-id'] : `${validateContractFile(target).contract.task_id}-RUN-001`;
+        res = withNewRun(repo, runId, initialize => {
+          const result = approve();
+          const cp = initialize({ contract: result.contract_path });
+          result.run = { run_id: cp.run_id, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
+          result.next_command = `node scripts/crafthelm.mjs feedback --repo "${repo}" --run-id ${cp.run_id} --selective`;
+          return result;
         });
-        res.run = { run_id: cp.run_id, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
-        res.next_command = `node scripts/crafthelm.mjs feedback --repo ${typeof args.repo === 'string' ? args.repo : '.'} --run-id ${cp.run_id} --selective`;
+      } else {
+        res = approve();
       }
+      for (const w of res.warnings ?? []) process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else {
-      throw new Error('Usage: contract.mjs <validate|plan|approve> <contractPath> [--actor <name>]');
+      throw new Error('Usage: contract.mjs <validate|plan|add-e2e|approve> <contractPath> [options]');
     }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);

@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
-import { initCheckpoint } from './checkpoint.mjs';
+import { withNewRun } from './checkpoint.mjs';
 import { runDoctor } from './doctor.mjs';
-import { runInterview } from './interview.mjs';
+import { allocateNextTaskId, runInterview } from './interview.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { DEFAULT_IGNORED_DIRS } from './lib/impact-languages.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
-import { getCheckpointPath, toPosixPath } from './lib/paths.mjs';
+import { toPosixPath } from './lib/paths.mjs';
 import { detectRepoTestRunners } from './lib/test-runners.mjs';
 
 const PREFERRED_HOST_ORDER = ['codex', 'claude', 'antigravity', 'generic'];
@@ -200,9 +200,11 @@ export function startTask(options = {}) {
     ];
   }
 
-  const iv = runInterview({
+  const taskId = options.taskId ?? allocateNextTaskId(repoRoot);
+  const runId = options.runId ?? `${taskId}-RUN-001`;
+  const interviewOptions = {
     repo: repoRoot,
-    taskId: options.taskId,
+    taskId,
     request: requestText,
     host: selectedHost,
     changeKind: options.changeKind,
@@ -215,7 +217,24 @@ export function startTask(options = {}) {
     ...(options.strictInterview ? { strictInterview: true } : {}),
     ...(options.processProfile ? { processProfile: options.processProfile } : {}),
     ...(Object.keys(inputData).length > 0 ? { inputData } : {}),
-  });
+  };
+  const finish = initialize => finishStart({ options, repoArg, repoRoot, requestText, detected, cmdHints, runId, interviewOptions, initialize });
+  if (!options.initRun || !options.approveContract) return finish();
+  try {
+    return withNewRun(repoRoot, runId, finish);
+  } catch (err) {
+    if (err.code !== 'RUN_EXISTS') throw err;
+    return {
+      ok: false, status: 'RUN_EXISTS', repo: repoRoot, detected,
+      run: { run_id: runId, initialized: false, reason: 'RUN_EXISTS' },
+      next_action: '기존 실행을 이어가세요.',
+      next_command: `node scripts/crafthelm.mjs checkpoint resume --repo ${quoteArg(repoArg)} --run-id ${quoteArg(runId)}`,
+    };
+  }
+}
+
+function finishStart({ options, repoArg, repoRoot, requestText, detected, cmdHints, runId, interviewOptions, initialize }) {
+  const iv = runInterview(interviewOptions);
 
   if (!iv.ok) {
     return {
@@ -241,15 +260,10 @@ export function startTask(options = {}) {
     : toPosixPath(iv.contract_path);
 
   // --init-run: freeze the run baseline in the same call when the contract is already approved and ready.
-  const runId = options.runId ?? `${iv.task_id}-RUN-001`;
   let run = null;
   if (options.initRun && iv.policy_ready && iv.status === 'CONTRACT_APPROVED') {
-    if (fs.existsSync(getCheckpointPath(repoRoot, runId))) {
-      run = { run_id: runId, initialized: false, reason: 'RUN_EXISTS' };
-    } else {
-      const cp = initCheckpoint({ repo: repoRoot, contract: iv.contract_path, runId, docsDir: options.docsDir });
-      run = { run_id: runId, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
-    }
+    const cp = initialize({ contract: iv.contract_path, docsDir: options.docsDir });
+    run = { run_id: runId, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
   } else if (options.initRun) {
     run = {
       run_id: runId,
@@ -263,16 +277,13 @@ export function startTask(options = {}) {
   if (run?.initialized) {
     nextAction = '계약 승인과 실행 기준선 동결까지 끝났습니다. 허용 범위(scope.allow) 안에서 코드를 수정한 뒤 아래 명령으로 검증과 검토 보고서 발행을 한 번에 실행하세요.';
     nextCommand = `node scripts/crafthelm.mjs feedback --repo ${quoteArg(repoArg)} --run-id ${runId} --selective`;
-  } else if (run?.reason === 'RUN_EXISTS') {
-    nextAction = `실행 ${runId}가 이미 있어 기준선을 다시 만들지 않았습니다. 현재 상태를 확인하세요.`;
-    nextCommand = `node scripts/crafthelm.mjs status --repo ${quoteArg(repoArg)}`;
   } else if (iv.warnings?.some((w) => w.code === 'LITE_PROFILE_NOT_ELIGIBLE')) {
     nextAction = '경량 프로필(lite)은 버그 수정(bugfix)에만 쓸 수 있습니다. 프로필을 빼고 다시 실행하세요.';
     nextCommand = `node scripts/crafthelm.mjs start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite`;
   } else if (!iv.policy_ready) {
     const hintE2e = cmdHints.suggested_e2e_command ?? '<E2E 또는 스모크 실행 명령>';
     nextAction = '기능 변경 계약에 E2E/스모크 확인 명령이 빠졌습니다. 아래 명령에 실제 동작 확인 명령을 지정해 계약을 보완하세요.';
-    nextCommand = `node scripts/crafthelm.mjs start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite --e2e-cmd ${quoteArg(hintE2e)}`;
+    nextCommand = `node scripts/crafthelm.mjs contract add-e2e ${quoteArg(contractDisplayPath)} --e2e-cmd ${quoteArg(hintE2e)}`;
   } else if (iv.status === 'CONTRACT_PENDING') {
     nextAction = options.initRun
       ? '계약 스키마와 E2E 검증 기준이 준비되었습니다. 아래 명령으로 계약 승인과 실행 기준선 동결을 한 번에 수행하세요.'

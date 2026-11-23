@@ -4,6 +4,7 @@ import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
 import { computeSnapshotDigest, getChangedFiles, getGitHead, isGitRepo } from './lib/git.mjs';
 import { buildHandoffPacket } from './lib/handoff.mjs';
+import { INTERVIEW_DOCS, withArtifactLock, writeAtomic } from './lib/task-artifacts.mjs';
 import { STANDARD_STAGES } from './lib/methodology.mjs';
 import {
   getApprovalDecisionPath,
@@ -66,23 +67,12 @@ function resolveTaskDocsDir(repoRoot, docsDir, taskId) {
 function computeBaselineCraftHelmFiles(repoRoot, docsDir = 'docs', taskId = null) {
   const effectiveDocsDir = resolveTaskDocsDir(repoRoot, docsDir, taskId);
   const candidates = [
-    `${effectiveDocsDir}/requirements.md`,
-    `${effectiveDocsDir}/decisions.md`,
-    `${effectiveDocsDir}/open_questions.md`,
-    `${effectiveDocsDir}/acceptance.md`,
-    `${effectiveDocsDir}/interview_questions.md`,
+    ...INTERVIEW_DOCS.map(name => `${effectiveDocsDir}/${name}`),
+    `.crafthelm/contracts/${taskId}.json`,
     '.crafthelm/config.json',
     '.crafthelm/skills.lock.json',
     'GEMINI.md',
   ];
-  const contractsDir = path.join(repoRoot, '.crafthelm', 'contracts');
-  if (fs.existsSync(contractsDir)) {
-    for (const f of fs.readdirSync(contractsDir)) {
-      if (f.endsWith('.json')) {
-        candidates.push(`.crafthelm/contracts/${f}`);
-      }
-    }
-  }
   for (const skillBase of ['.agents/skills', '.claude/skills', '.codex/skills', '.gemini/skills']) {
     const absBase = path.join(repoRoot, skillBase);
     if (fs.existsSync(absBase)) {
@@ -138,6 +128,26 @@ function saveCheckpoint(repoRoot, runId, checkpoint) {
  * Initialize a new CraftHelm run checkpoint and freeze baseline hashes.
  */
 export function initCheckpoint(options) {
+  const taskId = options.runId ? null : readJson(path.resolve(options.contract)).task_id;
+  const runId = options.runId ?? `${taskId}-RUN-001`;
+  return withNewRun(options.repo ?? '.', runId, initialize => initialize(options));
+}
+
+// Reserve the ID before any chained interview/approval can change its contract.
+export function withNewRun(repo, runId, action) {
+  const dir = getRunDir(repo, runId);
+  const checkpoint = getCheckpointPath(repo, runId);
+  const duplicate = () => Object.assign(new Error(
+    `RUN_EXISTS: Run "${runId}" already exists. Use checkpoint resume --repo "${repo}" --run-id "${runId}".`,
+  ), { code: 'RUN_EXISTS' });
+  if (fs.existsSync(checkpoint)) throw duplicate();
+  return withArtifactLock(path.join(dir, '.init.sqlite'), () => {
+    if (fs.existsSync(checkpoint)) throw duplicate();
+    return action(options => initializeCheckpoint({ ...options, repo, runId }));
+  });
+}
+
+function initializeCheckpoint(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const contractPath = path.resolve(options.contract);
   const contract = readJson(contractPath);
@@ -201,7 +211,9 @@ export function initCheckpoint(options) {
     updated_at: new Date().toISOString(),
   };
 
-  return saveCheckpoint(repoRoot, runId, checkpoint);
+  assertValidSchema('checkpoint', checkpoint, `checkpoint ${runId}`);
+  writeAtomic(getCheckpointPath(repoRoot, runId), `${JSON.stringify(checkpoint, null, 2)}\n`);
+  return checkpoint;
 }
 
 /**
