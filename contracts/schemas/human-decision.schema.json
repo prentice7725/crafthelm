@@ -47,7 +47,32 @@
     },
     "verification_type": {
       "type": "string",
-      "const": "local_explicit_input_not_identity_verified"
+      "enum": [
+        "local_explicit_input_not_identity_verified",
+        "local_tty_confirmed_not_identity_verified",
+        "signed_ed25519"
+      ]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "public_key_pem", "public_key_fingerprint", "value"],
+      "properties": {
+        "alg": { "type": "string", "const": "ed25519" },
+        "public_key_pem": { "type": "string", "minLength": 1 },
+        "public_key_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "value": { "type": "string", "minLength": 1 }
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "verification_type": { "const": "signed_ed25519" } },
+        "required": ["verification_type"]
+      },
+      "then": { "required": ["signature"] },
+      "else": { "not": { "required": ["signature"] } }
+    }
+  ]
 }

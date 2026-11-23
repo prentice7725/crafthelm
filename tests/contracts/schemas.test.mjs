@@ -143,6 +143,21 @@ describe('CraftHelm JSON Schemas', () => {
       validateAgainstSchema('human-decision', { ...validDecision, verification_type: 'cryptographic_sso_verified' }).valid,
       false,
     );
+    assert.equal(
+      validateAgainstSchema('human-decision', { ...validDecision, verification_type: 'local_tty_confirmed_not_identity_verified' }).valid,
+      true,
+    );
+    const signature = { alg: 'ed25519', public_key_pem: 'PEM', public_key_fingerprint: SHA_A, value: 'c2ln' };
+    assert.equal(
+      validateAgainstSchema('human-decision', { ...validDecision, verification_type: 'signed_ed25519', signature }).valid,
+      true,
+    );
+    // A signed tier without a signature, or a signature on an unsigned tier, is rejected.
+    assert.equal(
+      validateAgainstSchema('human-decision', { ...validDecision, verification_type: 'signed_ed25519' }).valid,
+      false,
+    );
+    assert.equal(validateAgainstSchema('human-decision', { ...validDecision, signature }).valid, false);
 
     const validPackageMeta = {
       schema_version: '0.3',
@@ -347,6 +362,6 @@ describe('CraftHelm JSON Schemas', () => {
 
     // Ensure all 12 schema files exist under contracts/schemas/
     const schemaFiles = fs.readdirSync(path.join(CRAFTHELM_ROOT, 'contracts', 'schemas')).filter((f) => f.endsWith('.schema.json'));
-    assert.equal(schemaFiles.length, 12);
+    assert.equal(schemaFiles.length, 13);
   });
 });

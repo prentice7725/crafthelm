@@ -4,6 +4,16 @@ import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
 import { computeSnapshotDigest } from './lib/git.mjs';
 import {
+  VERIFICATION_TYPES,
+  assertHumanInteractive,
+  confirmByTyping,
+  evaluateDecisionIdentity,
+  fingerprintOfPrivateKeyFile,
+  generateApproverKeyPair,
+  loadApproversPolicy,
+  signDecisionRecord,
+} from './lib/human-gate.mjs';
+import {
   getApprovalDecisionPath,
   getApprovalHistoryPath,
   getCheckpointPath,
@@ -35,9 +45,17 @@ const DECISION_MAP = {
   verification_requested: 'verification_requested',
 };
 
+function resolvePolicyBaseRef(contract, checkpoint) {
+  return contract.verification_policy?.policy_base_ref ?? checkpoint.baseline_git_head;
+}
+
 /**
  * Record an explicit human review decision (`accepted`, `changes_requested`, `rejected`, `verification_requested`).
  * Verifies current state is READY_FOR_HUMAN_REVIEW and all artifact digests match current disk/snapshot state.
+ *
+ * Identity tier: `signKeyPath` yields `signed_ed25519`; `ttyConfirmed` (set only by the interactive CLI)
+ * yields `local_tty_confirmed_not_identity_verified`; otherwise `local_explicit_input_not_identity_verified`.
+ * When the protected approvers policy sets `require_signed`, only a signature from a listed approver is accepted.
  */
 export function recordHumanDecision(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
@@ -85,6 +103,25 @@ export function recordHumanDecision(options) {
     throw new Error('CONTRACT_MISMATCH: execution contract changed without replan.');
   }
 
+  // Identity gate: evaluated before any artifact is mutated.
+  const approversPolicy = loadApproversPolicy(repoRoot, resolvePolicyBaseRef(contract, checkpoint));
+  const actorName = String(options.actor).trim();
+  if (options.signKeyPath) {
+    const fingerprint = fingerprintOfPrivateKeyFile(path.resolve(options.signKeyPath));
+    const listed = approversPolicy.approvers.some(
+      (a) => a.public_key_fingerprint === fingerprint && a.actor === actorName,
+    );
+    if (approversPolicy.require_signed && !listed) {
+      throw new Error(
+        `APPROVER_NOT_TRUSTED: actor "${actorName}" with key ${fingerprint.slice(0, 16)}... is not listed in the protected approvers policy (${approversPolicy.source}).`,
+      );
+    }
+  } else if (approversPolicy.require_signed) {
+    throw new Error(
+      `SIGNATURE_REQUIRED: the protected approvers policy (${approversPolicy.source}) requires a signed decision; pass --sign-key <ed25519 private key>.`,
+    );
+  }
+
   const nextStateMap = {
     accepted: STATES.ACCEPTED,
     changes_requested: STATES.CHANGES_REQUESTED,
@@ -92,7 +129,7 @@ export function recordHumanDecision(options) {
     verification_requested: STATES.VERIFYING,
   };
   const targetState = nextStateMap[normalizedDecision];
-  const actor = String(options.actor).trim();
+  const actor = actorName;
   assertTransition(checkpoint.state, targetState, {
     humanDecision: { decision: normalizedDecision, actor },
   });
@@ -132,8 +169,15 @@ export function recordHumanDecision(options) {
       ? { related_requirements: options.relatedRequirements }
       : {}),
     ...(options.reproConditions ? { repro_conditions: String(options.reproConditions) } : {}),
-    verification_type: 'local_explicit_input_not_identity_verified',
+    verification_type: options.signKeyPath
+      ? VERIFICATION_TYPES.SIGNED
+      : options.ttyConfirmed
+        ? VERIFICATION_TYPES.TTY_CONFIRMED
+        : VERIFICATION_TYPES.EXPLICIT_INPUT,
   };
+  if (options.signKeyPath) {
+    record.signature = signDecisionRecord(record, path.resolve(options.signKeyPath));
+  }
 
   assertValidSchema('human-decision', record, `human-decision ${runId}`);
 
@@ -160,6 +204,7 @@ export function recordHumanDecision(options) {
     target_snapshot_digest: currentSnapshot,
     report_sha256: reportSha,
     verification_type: record.verification_type,
+    identity: evaluateDecisionIdentity(record, approversPolicy).identity,
   };
 }
 
@@ -202,11 +247,24 @@ export function verifyHumanDecision(options) {
     mismatches.push('evidence_manifest_sha256 changed after decision');
   }
 
+  // Identity: a broken signature, or a missing/untrusted one under `require_signed`, invalidates the decision.
+  const checkpointPath = getCheckpointPath(repoRoot, runId);
+  const checkpoint = fs.existsSync(checkpointPath) ? readJson(checkpointPath) : {};
+  const approversPolicy = loadApproversPolicy(repoRoot, resolvePolicyBaseRef(contract, checkpoint));
+  const identity = evaluateDecisionIdentity(decision, approversPolicy);
+  if (identity.identity === 'SIGNATURE_INVALID') {
+    mismatches.push(`signature invalid: ${identity.detail}`);
+  } else if (approversPolicy.require_signed && identity.identity !== 'SIGNATURE_TRUSTED') {
+    mismatches.push(`protected approvers policy requires a trusted signature: ${identity.detail}`);
+  }
+
   if (mismatches.length > 0) {
     return {
       valid: false,
       status: 'INVALIDATED',
       decision: decision.decision,
+      verification_type: decision.verification_type,
+      identity: identity.identity,
       mismatches,
     };
   }
@@ -217,6 +275,8 @@ export function verifyHumanDecision(options) {
     decision: decision.decision,
     actor: decision.actor,
     recorded_at: decision.recorded_at,
+    verification_type: decision.verification_type,
+    identity: identity.identity,
     mismatches: [],
   };
 }
@@ -227,8 +287,15 @@ function printUsage() {
       'CraftHelm Human Approval CLI (Explicit Human Acceptance Decision Record & Verification)',
       '',
       'Usage:',
-      '  approval.mjs record --repo <path> --run-id <id> --decision <ACCEPTED|CHANGES_REQUESTED|REJECTED|NEED_MORE_EVIDENCE> --actor <name> [--rationale "<text>"] [--contract <path>]',
+      '  approval.mjs record --repo <path> --run-id <id> --decision <accept|changes-requested|reject|request-verification> --actor <name> --rationale "<text>" [--sign-key <ed25519.pem>] [--contract <path>]',
       '  approval.mjs verify --repo <path> --run-id <id> [--contract <path>]',
+      '  approval.mjs keygen --out <private-key-path> --actor <name>',
+      '',
+      'Human gate:',
+      '  record refuses to run inside a detected AI agent session and requires an interactive terminal,',
+      '  where the operator confirms by typing the last 8 characters of the review package SHA-256.',
+      '  With --sign-key the decision is signed (ed25519) and the terminal confirmation is skipped.',
+      '  A committed .crafthelm/approvers.json with "require_signed": true makes signatures from listed approvers mandatory.',
       '',
     ].join('\n'),
   );
@@ -246,7 +313,27 @@ if (isMainModule(import.meta.url)) {
   const sub = args._[0];
   try {
     if (sub === 'record') {
+      assertHumanInteractive({
+        action: 'Recording a human decision',
+        allowNonTty: Boolean(args['sign-key']),
+      });
+      let ttyConfirmed = false;
+      if (!args['sign-key']) {
+        const reportSha = sha256File(getReviewPackagePath(path.resolve(args.repo ?? '.'), args['run-id']));
+        process.stderr.write(
+          `Run ${args['run-id']}: decision "${args.decision}" by "${args.actor}"\nReview package SHA-256: ${reportSha}\n`,
+        );
+        ttyConfirmed = await confirmByTyping({
+          expected: reportSha.slice(-8),
+          message: 'Type the last 8 characters of the SHA-256 above to confirm you reviewed this package: ',
+        });
+        if (!ttyConfirmed) {
+          throw new Error('HUMAN_GATE_CONFIRMATION_MISMATCH: confirmation code did not match; nothing was recorded.');
+        }
+      }
       const res = recordHumanDecision({
+        signKeyPath: args['sign-key'],
+        ttyConfirmed,
         repo: args.repo,
         runId: args['run-id'],
         contract: args.contract,
@@ -266,8 +353,31 @@ if (isMainModule(import.meta.url)) {
       });
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
       process.exit(res.valid ? 0 : 1);
+    } else if (sub === 'keygen') {
+      assertHumanInteractive({ action: 'Generating an approver key', allowNonTty: true });
+      if (!args.out || args.out === true) throw new Error('keygen requires --out <private-key-path>.');
+      const outPath = path.resolve(String(args.out));
+      if (fs.existsSync(outPath)) throw new Error(`Refusing to overwrite existing key file: ${outPath}`);
+      const pair = generateApproverKeyPair();
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, pair.private_key_pem, { encoding: 'utf8', mode: 0o600 });
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            ok: true,
+            private_key_path: outPath,
+            approvers_entry: {
+              actor: typeof args.actor === 'string' ? args.actor : '<name>',
+              public_key_fingerprint: pair.public_key_fingerprint,
+            },
+            note: 'Keep the private key outside the repository and outside paths an AI agent can read. Commit approvers_entry into .crafthelm/approvers.json on the protected base branch.',
+          },
+          null,
+          2,
+        )}\n`,
+      );
     } else {
-      throw new Error('Usage: approval.mjs <record|verify> --repo <path> --run-id <id> ...');
+      throw new Error('Usage: approval.mjs <record|verify|keygen> --repo <path> --run-id <id> ...');
     }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);

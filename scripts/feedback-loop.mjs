@@ -67,6 +67,7 @@ export async function runFeedbackLoop(options = {}) {
       runId,
       contract: contractPath,
       selective: Boolean(options.selective),
+      mutationProbe: Boolean(options.mutationProbe),
       reviewFile: options.reviewFile,
       policyDir: options.policyDir,
     });
@@ -275,6 +276,7 @@ if (isMainModule(import.meta.url)) {
     runId: args['run-id'],
     contract: args.contract,
     selective: Boolean(args.selective),
+    mutationProbe: Boolean(args['mutation-probe']),
     publishOnPass: !args['no-publish'],
     repairCmd: args['repair-cmd'],
     causeId: args.cause,

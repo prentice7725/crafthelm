@@ -219,6 +219,7 @@ export function dispatch(taskSpec, options = {}) {
 
   const res = runCommand('agy', args, {
     cwd: taskSpec.cwd,
+    timeoutMs: options.timeoutMs,
     env: options.env,
     runner: options.runner,
     resolve: options.resolve,

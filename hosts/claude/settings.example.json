@@ -9,9 +9,24 @@
       "Bash(git status*)",
       "Bash(git diff*)"
     ],
+    "ask": [
+      "Bash(*contract.mjs approve*)",
+      "Bash(*crafthelm.mjs contract approve*)",
+      "Bash(*crafthelm contract approve*)",
+      "Bash(*--approve-contract*)",
+      "Bash(*checkpoint.mjs approve-stage*)",
+      "Bash(*crafthelm.mjs checkpoint approve-stage*)",
+      "Bash(*crafthelm checkpoint approve-stage*)"
+    ],
     "deny": [
       "Bash(git push*)",
-      "Bash(rm -rf*)"
+      "Bash(rm -rf*)",
+      "Bash(*approval.mjs record*)",
+      "Bash(*crafthelm.mjs approve record*)",
+      "Bash(*crafthelm approve record*)",
+      "Bash(*approval.mjs keygen*)",
+      "Bash(*crafthelm.mjs approve keygen*)",
+      "Bash(*crafthelm approve keygen*)"
     ]
   },
   "crafthelm": {

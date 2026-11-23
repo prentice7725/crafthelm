@@ -70,6 +70,7 @@ function computeBaselineCraftHelmFiles(repoRoot, docsDir = 'docs', taskId = null
     `${effectiveDocsDir}/decisions.md`,
     `${effectiveDocsDir}/open_questions.md`,
     `${effectiveDocsDir}/acceptance.md`,
+    `${effectiveDocsDir}/interview_questions.md`,
     '.crafthelm/config.json',
     '.crafthelm/skills.lock.json',
     'GEMINI.md',

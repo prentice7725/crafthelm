@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson } from './lib/crypto.mjs';
+import { classifyApprovalChannel } from './lib/human-gate.mjs';
+import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } from './lib/lite-profile.mjs';
 import { composeMethodologyPlan } from './lib/methodology.mjs';
 import { assertValidSchema, validateAgainstSchema } from './lib/schema.mjs';
 
@@ -13,9 +15,18 @@ import { assertValidSchema, validateAgainstSchema } from './lib/schema.mjs';
 export function checkContractReadiness(contract) {
   const warnings = [];
   const changeKind = contract?.change_kind ?? 'feature';
+  if (isLiteContract(contract) && !LITE_ELIGIBLE_CHANGE_KINDS.includes(changeKind)) {
+    warnings.push({
+      code: 'LITE_PROFILE_NOT_ELIGIBLE',
+      message: `process_profile "lite" is only available for change_kind ${LITE_ELIGIBLE_CHANGE_KINDS.join(', ')}; this contract is "${changeKind}".`,
+      guidance: 'Remove process_profile (or set it to "full"), or re-plan the task as a bugfix if that is what it is.',
+    });
+  }
+  // A lite bugfix may run without E2E; verify re-checks the size and evidence conditions on the real diff.
   const requiresE2e =
     (changeKind === 'feature' || changeKind === 'bugfix' || !contract?.change_kind) &&
-    contract?.verification_policy?.require_e2e_for_functional !== false;
+    contract?.verification_policy?.require_e2e_for_functional !== false &&
+    !liteExemptsE2eByContract(contract);
 
   if (requiresE2e) {
     const acceptance = Array.isArray(contract?.acceptance) ? contract.acceptance : [];
@@ -77,7 +88,7 @@ export function planFromContract(contractPath) {
  * Record explicit contract approval (authorizes execution only, NOT human final acceptance).
  * @param {string} contractPath
  * @param {string} actor
- * @param {{ strictReadiness?: boolean }} [options]
+ * @param {{ strictReadiness?: boolean, channel?: 'programmatic'|'agent_session'|'interactive_terminal'|'non_interactive' }} [options]
  */
 export function approveContractFile(contractPath, actor, options = {}) {
   if (!actor || !String(actor).trim()) {
@@ -98,6 +109,7 @@ export function approveContractFile(contractPath, actor, options = {}) {
     contract_approved: true,
     contract_approved_by: String(actor).trim(),
     contract_approved_at: new Date().toISOString(),
+    contract_approved_via: options.channel ?? 'programmatic',
   };
 
   assertValidSchema('execution', contract, absPath);
@@ -110,6 +122,7 @@ export function approveContractFile(contractPath, actor, options = {}) {
     contract_sha256: sha256CanonicalJson(contract),
     approved_by: contract.approval.contract_approved_by,
     approved_at: contract.approval.contract_approved_at,
+    approved_via: contract.approval.contract_approved_via,
     policy_ready: readiness.policy_ready,
     warnings: readiness.warnings,
     note: 'Execution contract approved. Final human acceptance remains PENDING until human review.',
@@ -124,7 +137,9 @@ function printUsage() {
       'Usage:',
       '  contract.mjs validate <contractPath>',
       '  contract.mjs plan     <contractPath>',
-      '  contract.mjs approve  <contractPath> --actor <name> [--strict]',
+      '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--init-run [--repo <path>] [--run-id <id>]]',
+      '',
+      '  --init-run   After approval, also freeze the run baseline (checkpoint init). Implies --strict.',
       '',
     ].join('\n'),
   );
@@ -161,9 +176,22 @@ if (isMainModule(import.meta.url)) {
       const res = planFromContract(target);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'approve') {
-      const res = approveContractFile(target, args.actor, { strictReadiness: Boolean(args.strict) });
+      const res = approveContractFile(target, args.actor, {
+        strictReadiness: Boolean(args.strict) || Boolean(args['init-run']),
+        channel: classifyApprovalChannel(),
+      });
       for (const w of res.warnings ?? []) {
         process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
+      }
+      if (args['init-run']) {
+        const { initCheckpoint } = await import('./checkpoint.mjs');
+        const cp = initCheckpoint({
+          repo: typeof args.repo === 'string' ? args.repo : '.',
+          contract: res.contract_path,
+          runId: typeof args['run-id'] === 'string' ? args['run-id'] : undefined,
+        });
+        res.run = { run_id: cp.run_id, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
+        res.next_command = `node scripts/crafthelm.mjs feedback --repo ${typeof args.repo === 'string' ? args.repo : '.'} --run-id ${cp.run_id} --selective`;
       }
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else {

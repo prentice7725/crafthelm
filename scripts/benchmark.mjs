@@ -314,9 +314,16 @@ export function formatBenchmarkMarkdown(report) {
 function printUsage() {
   process.stdout.write(
     [
-      'CraftHelm Deterministic Benchmark CLI (E01-E04, E10 Harness)',
+      'CraftHelm Benchmark CLI (Deterministic E01-E04, E10 Harness + Live A/B/C Comparison)',
       '',
-      'Usage: benchmark.mjs [--host generic|claude|codex|antigravity|custom] [--output <report.md>]',
+      'Usage:',
+      '  benchmark.mjs [--host generic|claude|codex|antigravity|custom] [--output <report.md>]',
+      '  benchmark.mjs live --host <claude|codex|antigravity|custom> --i-accept-cost',
+      '                     [--arms A,B,C] [--tasks L01,L02,L03] [--permission-mode <mode>] [--timeout-ms <n>] [--output <report.md>]',
+      '',
+      '  live   Runs each task once per arm on the real host CLI and reports the tokens and cost that CLI returns.',
+      '         A = top model alone, B = CraftHelm + routed worker tier, C = CraftHelm single model.',
+      '         It spends real tokens, so it refuses to start without --i-accept-cost.',
       '',
     ].join('\n'),
   );
@@ -329,6 +336,30 @@ if (isMainModule(import.meta.url)) {
     process.exit(0);
   }
   const args = parseArgs(argv);
+  if (args._[0] === 'live') {
+    try {
+      const { formatLiveBenchmarkMarkdown, runLiveBenchmark } = await import('./lib/benchmark-live.mjs');
+      const splitList = (value) => (typeof value === 'string' ? value.split(',').map((s) => s.trim()).filter(Boolean) : undefined);
+      const live = await runLiveBenchmark({
+        host: args.host ?? 'claude',
+        arms: splitList(args.arms),
+        taskIds: splitList(args.tasks),
+        acceptCost: Boolean(args['i-accept-cost']),
+        permissionMode: typeof args['permission-mode'] === 'string' ? args['permission-mode'] : undefined,
+        timeoutMs: args['timeout-ms'] ? Number(args['timeout-ms']) : undefined,
+      });
+      if (args.output) {
+        const outPath = path.resolve(args.output);
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, formatLiveBenchmarkMarkdown(live), 'utf8');
+      }
+      process.stdout.write(`${JSON.stringify(live, null, 2)}\n`);
+      process.exit(live.status === 'COMPLETED' ? 0 : 1);
+    } catch (err) {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(1);
+    }
+  }
   const report = runDeterministicBenchmark({ host: args.host ?? 'generic' });
   if (args.output) {
     const outPath = path.resolve(args.output);

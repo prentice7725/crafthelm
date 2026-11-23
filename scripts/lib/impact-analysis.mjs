@@ -205,22 +205,25 @@ function evaluateMandatoryFallbacks({ changedFiles, globalPatterns, testCandidat
   if (globalChanged.length > 0) {
     return {
       fallback_to_full: true,
+      fallback_code: 'GLOBAL_CONFIG_CHANGED',
       fallback_reason: `Global config or schema file changed: ${globalChanged.join(', ')}`,
     };
   }
   if (unparsedCodeChanged.length > 0) {
     return {
       fallback_to_full: true,
+      fallback_code: 'UNPARSED_SOURCE_CHANGED',
       fallback_reason: `Unparsed or ignored source files changed requiring full verification: ${unparsedCodeChanged.join(', ')}`,
     };
   }
   if (nonTestSourceChanged.length > 0 && testCandidates.length > 0 && selectedTests.length === 0) {
     return {
       fallback_to_full: true,
+      fallback_code: 'NO_TEST_MATCHED',
       fallback_reason: 'Source files changed but zero tests matched statically; falling back to full suite for safety',
     };
   }
-  return { fallback_to_full: false, fallback_reason: null };
+  return { fallback_to_full: false, fallback_code: null, fallback_reason: null };
 }
 
 function rangesOverlap(aStart, aEnd, bStart, bEnd) {
@@ -272,6 +275,7 @@ function buildFallbackReport({ baseRef, changedFiles, testCandidates, runnerInfo
     recommended_test_command: null,
     recommended_test_commands: [],
     fallback_to_full: true,
+    fallback_code: 'ANALYSIS_UNAVAILABLE',
     fallback_reason: reason,
     graph_stats: { files_parsed: 0, functions_indexed: 0, classes_indexed: 0, import_edges: 0, call_edges: 0 },
     languages_detected: runnerInfo.languages,
@@ -384,6 +388,7 @@ export function analyzeImpact(repoRoot, options = {}) {
           ...(mandatory.fallback_to_full
             ? {
                 fallback_to_full: true,
+                fallback_code: mandatory.fallback_code,
                 fallback_reason: mandatory.fallback_reason,
                 recommended_test_command: null,
                 recommended_test_commands: [],
@@ -713,7 +718,7 @@ export function analyzeImpact(repoRoot, options = {}) {
     }
   }
 
-  const { fallback_to_full: fallbackToFull, fallback_reason: fallbackReason } = evaluateMandatoryFallbacks({
+  const { fallback_to_full: fallbackToFull, fallback_code: fallbackCode, fallback_reason: fallbackReason } = evaluateMandatoryFallbacks({
     changedFiles,
     globalPatterns,
     testCandidates,
@@ -745,6 +750,7 @@ export function analyzeImpact(repoRoot, options = {}) {
     recommended_test_command: cmdPlan.recommendedCommand,
     recommended_test_commands: cmdPlan.commands,
     fallback_to_full: fallbackToFull,
+    fallback_code: fallbackCode,
     fallback_reason: fallbackReason,
     graph_stats: {
       files_parsed: parsedModules.size,

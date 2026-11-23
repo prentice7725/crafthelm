@@ -44,7 +44,7 @@ export function composeMethodologyPlan(methodology, changeKind = 'feature') {
     },
     interview: {
       inputs: ['request', 'sot_inventory'],
-      outputs: ['requirements.md', 'decisions.md', 'open_questions.md', 'acceptance.md', 'execution-contract.json'],
+      outputs: ['requirements.md', 'decisions.md', 'open_questions.md', 'acceptance.md', 'interview_questions.md', 'execution-contract.json'],
       entry_criteria: ['Discovery completed'],
       exit_criteria: ['All BLOCKER uncertainties resolved', 'Contract approved'],
       owner: 'lead',

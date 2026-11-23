@@ -5,6 +5,8 @@ import { checkContractReadiness } from './contract.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson } from './lib/crypto.mjs';
 import { getGitHead, isGitRepo, runGit } from './lib/git.mjs';
+import { classifyApprovalChannel } from './lib/human-gate.mjs';
+import { generateInterviewQuestions } from './lib/interview-questions.mjs';
 import { hasMemorySources, listDecisions, searchMemory } from './lib/memory.mjs';
 import { getContractPath, toPosixPath } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
@@ -160,6 +162,46 @@ export function runInterview(options = {}) {
     });
   }
 
+  // Deterministic question generation from repo signals and request text (zero LLM calls).
+  const requestTokens = new Set(requestText.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 4));
+  const relatedDecisions = listDecisions({ repo: repoRoot, includeSuperseded: false }).filter((d) =>
+    String(d.title ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u).some((t) => t.length >= 4 && requestTokens.has(t)),
+  );
+  const generated = generateInterviewQuestions({
+    repoRoot,
+    requestText,
+    changeKind: options.changeKind ?? input.change_kind,
+    input: {
+      ...input,
+      // An E2E command passed on the CLI is supplied acceptance input only alongside explicit criteria;
+      // on its own it does not say what proves this request.
+    },
+    relatedDecisions,
+  });
+  const openGeneratedQuestions = generated.questions.filter((q) => !q.answered);
+
+  // Strict mode: generated BLOCKER questions and unexamined categories stop the interview.
+  const strictInterview = Boolean(options.strictInterview ?? repoConfig?.interview?.strict);
+  if (strictInterview && requestText.trim()) {
+    const existingIds = new Set(uncertainties.map((u) => u.id));
+    const coveredByLegacy = { 'Q-ACCEPTANCE': 'U-AC', 'Q-SCOPE': 'U-SCOPE' };
+    for (const q of openGeneratedQuestions) {
+      if (q.level !== 'BLOCKER' || existingIds.has(q.id) || existingIds.has(coveredByLegacy[q.id])) continue;
+      uncertainties.push({ id: q.id, level: 'BLOCKER', question: q.question, category: q.category, why: q.why, resolved: false });
+    }
+    for (const [category, cov] of Object.entries(generated.coverage)) {
+      if (cov.status !== 'unaddressed') continue;
+      if (uncertainties.some((u) => u.category === category && u.level === 'BLOCKER' && !u.resolved)) continue;
+      uncertainties.push({
+        id: `U-COVERAGE-${category.toUpperCase()}`,
+        level: 'BLOCKER',
+        category,
+        question: `"${category}" 영역을 검토한 근거가 없습니다. 질문에 답하거나 uncertainty_coverage.${category}.basis에 "해당 없음"의 근거 출처를 적어 주세요.`,
+        resolved: false,
+      });
+    }
+  }
+
   const unresolvedBlockers = uncertainties.filter(
     (u) => u.level === 'BLOCKER' && !u.resolved && !u.answer && !u.resolution,
   );
@@ -175,6 +217,9 @@ export function runInterview(options = {}) {
       unresolved_blockers: unresolvedBlockers,
       assumables,
       deferred,
+      generated_questions: openGeneratedQuestions,
+      uncertainty_coverage: generated.coverage,
+      strict_interview: strictInterview,
       artifacts_written: [],
     };
   }
@@ -231,6 +276,7 @@ export function runInterview(options = {}) {
     host,
     ...(hostConfig ? { host_config: hostConfig } : {}),
     change_kind: options.changeKind ?? input.change_kind ?? 'feature',
+    ...((options.processProfile ?? input.process_profile) ? { process_profile: options.processProfile ?? input.process_profile } : {}),
     methodology,
     scope: {
       allow: input.scope?.allow ?? ['src/**', 'tests/**'],
@@ -242,6 +288,7 @@ export function runInterview(options = {}) {
         ? {
             contract_approved_by: input.approved_by ?? options.actor ?? 'operator',
             contract_approved_at: new Date().toISOString(),
+            contract_approved_via: options.approvalChannel ?? 'programmatic',
           }
         : {}),
       require_on: input.approval?.require_on ?? ['scope_change', 'contract_change', 'deploy', 'external_transfer'],
@@ -266,6 +313,9 @@ export function runInterview(options = {}) {
       require_e2e_for_functional: input.verification_policy?.require_e2e_for_functional ?? true,
       ...(input.verification_policy?.reliability_rules_path ? { reliability_rules_path: input.verification_policy.reliability_rules_path } : {}),
       ...(input.verification_policy?.review_policy_path ? { review_policy_path: input.verification_policy.review_policy_path } : {}),
+      ...(input.verification_policy?.mutation_probe !== undefined ? { mutation_probe: input.verification_policy.mutation_probe } : {}),
+      ...(input.verification_policy?.lite_max_changed_source_files ? { lite_max_changed_source_files: input.verification_policy.lite_max_changed_source_files } : {}),
+      ...(input.verification_policy?.lite_max_added_lines ? { lite_max_added_lines: input.verification_policy.lite_max_added_lines } : {}),
     },
   };
 
@@ -317,12 +367,32 @@ export function runInterview(options = {}) {
     '',
   ].join('\n');
 
+  const interviewQMd = [
+    `# Interview Questions — ${taskId}`,
+    '',
+    '저장소 신호와 요청 문구에서 결정적으로 생성한 질문입니다. 답하지 않은 항목은 가정으로 진행된 것입니다.',
+    '',
+    '| ID | 영역 | 수준 | 상태 | 질문 | 생성 근거 |',
+    '|---|---|---|---|---|---|',
+    ...(generated.questions.length > 0
+      ? generated.questions.map((q) => `| ${q.id} | ${q.category} | ${q.level} | ${q.answered ? '답변됨' : '미답변'} | ${q.question} | ${q.why} |`)
+      : ['| — | — | — | — | 생성된 질문 없음 | — |']),
+    '',
+    '## 영역별 검토 여부',
+    '',
+    '| 영역 | 상태 | 근거 |',
+    '|---|---|---|',
+    ...Object.entries(generated.coverage).map(([category, cov]) => `| ${category} | ${cov.status} | ${cov.basis} |`),
+    '',
+  ].join('\n');
+
   const writtenFiles = [];
   for (const [name, content] of [
     ['requirements.md', reqMd],
     ['decisions.md', decMd],
     ['open_questions.md', openQMd],
     ['acceptance.md', accMd],
+    ['interview_questions.md', interviewQMd],
   ]) {
     const outPath = path.join(docsAbsDir, name);
     fs.writeFileSync(outPath, content, 'utf8');
@@ -359,6 +429,9 @@ export function runInterview(options = {}) {
     policy_ready: readiness.policy_ready,
     warnings: readiness.warnings,
     next_questions: nextQuestions,
+    generated_questions: openGeneratedQuestions,
+    uncertainty_coverage: generated.coverage,
+    strict_interview: strictInterview,
     sot_sources: sot.sot_sources,
     active_decisions: activeDecisions,
     prior_memory_hits: priorMemoryHits,
@@ -372,7 +445,11 @@ function printUsage() {
     [
       'CraftHelm Interview CLI (Source-First Intake & Execution Contract Generator)',
       '',
-      'Usage: interview.mjs --request "<task description>" [--repo .] [--task-id <id>] [--change-kind feature|bugfix|refactor|docs|research] [--e2e-cmd "<cmd>"] [--host <host>] [--docs-dir <dir>] [--input <json>] [--overwrite] [--non-interactive] [--approve-contract --actor <name>]',
+      'Usage: interview.mjs --request "<task description>" [--repo .] [--task-id <id>] [--change-kind feature|bugfix|refactor|docs|research] [--e2e-cmd "<cmd>"] [--host <host>] [--docs-dir <dir>] [--input <json>] [--profile full|lite] [--overwrite] [--non-interactive] [--strict-interview] [--approve-contract --actor <name>]',
+      '',
+      '  --strict-interview   Treat generated BLOCKER questions and unexamined uncertainty categories',
+      '                       (scope, acceptance, data, security, compatibility) as blockers.',
+      '                       Also enabled by .crafthelm/config.json { "interview": { "strict": true } }.',
       '',
     ].join('\n'),
   );
@@ -396,7 +473,10 @@ if (isMainModule(import.meta.url)) {
     e2eCommand: args['e2e-cmd'],
     overwrite: Boolean(args.overwrite),
     nonInteractive: Boolean(args['non-interactive']),
+    ...(typeof args.profile === 'string' ? { processProfile: args.profile } : {}),
+    ...(args['strict-interview'] ? { strictInterview: true } : {}),
     approveContract: Boolean(args['approve-contract']),
+    approvalChannel: classifyApprovalChannel(),
     actor: args.actor,
   });
   for (const w of res.warnings ?? []) {

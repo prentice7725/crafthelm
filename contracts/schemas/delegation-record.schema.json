@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/delegation-record.schema.json",
+  "title": "CraftHelm Delegation Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "delegation_id",
+    "run_id",
+    "task_id",
+    "observation",
+    "host",
+    "role",
+    "task_type",
+    "tier",
+    "model_requested",
+    "degraded_to_single_model",
+    "status",
+    "usage",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.3" },
+    "delegation_id": { "type": "string", "pattern": "^D[0-9]{3,}$" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "observation": { "type": "string", "enum": ["observed", "self_reported"] },
+    "host": { "type": "string", "minLength": 1 },
+    "role": { "type": "string", "enum": ["explorer", "planner", "builder", "reviewer", "learning_curator"] },
+    "task_type": { "type": "string", "minLength": 1 },
+    "tier": { "type": "string", "enum": ["deterministic", "lightweight", "standard", "reasoning"] },
+    "model_requested": { "type": ["string", "null"] },
+    "degraded_to_single_model": { "type": "boolean" },
+    "status": { "type": "string", "enum": ["OK", "FAILED"] },
+    "exit_code": { "type": ["integer", "null"] },
+    "duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "prompt_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "input_tokens", "output_tokens", "cache_tokens", "cost_usd"],
+      "properties": {
+        "status": { "type": "string", "enum": ["measured", "unknown"] },
+        "input_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
+        "output_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
+        "cache_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
+        "cost_usd": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] }
+      }
+    },
+    "output_file": { "type": ["string", "null"] },
+    "worker_result": { "$ref": "#/$defs/workerResult" },
+    "recorded_at": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "observation": { "const": "self_reported" } },
+        "required": ["observation"]
+      },
+      "then": {
+        "required": ["worker_result"],
+        "properties": {
+          "usage": { "properties": { "status": { "const": "unknown" } } }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "workerResult": {
+      "title": "Lead Context Contract — worker result packet",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "status", "acceptance", "changed_files", "scope_violation"],
+      "properties": {
+        "task_id": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["completed", "failed", "blocked"] },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "status": { "type": "string", "enum": ["pass", "fail", "not_run"] },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "changed_files": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "scope_violation": { "type": "boolean" },
+        "root_cause": { "type": ["string", "null"] },
+        "decision_needed": { "type": ["string", "null"] },
+        "artifact_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}
