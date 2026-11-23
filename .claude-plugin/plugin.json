@@ -1,0 +1,7 @@
+{
+  "name": "crafthelm",
+  "version": "0.1.0",
+  "description": "Single-provider, interview-first, methodology-composable, evidence-driven development operating framework",
+  "license": "MIT",
+  "skills": "./hosts/claude/skills"
+}

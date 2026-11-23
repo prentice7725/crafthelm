@@ -1,0 +1,137 @@
+{
+  "schema_version": "0.1",
+  "entries": [
+    {
+      "id": "kouetsu",
+      "upstream_url": "https://github.com/prentice7725/kouetsu",
+      "commit_or_release": "1.0.2",
+      "license": "MIT",
+      "files_digest": "24959571ab71816c6f904a484697705c0c94f813ec142f5566d9fc7e8f267c79",
+      "references_digest": "e9ad42f666fba112f29e6b6c57a86d99d30972ce946215c8eda43f8638ddc935",
+      "host_digests": {
+        "claude": {
+          "normalized_skill_digest": "24959571ab71816c6f904a484697705c0c94f813ec142f5566d9fc7e8f267c79",
+          "source_type": "claude_plugin_cache_or_marketplace"
+        },
+        "codex": {
+          "normalized_skill_digest": "f27081d0c9137317b5303da8aaf3ca17ccc9c2c473a49e2c1709227ac2a824fc",
+          "source_type": "repo_host_package"
+        },
+        "universal": {
+          "normalized_skill_digest": "0e76c3e7381be4a9bd3f42fc728431be920b585b6bb521cd06b095841d34b0a6",
+          "source_type": "repo_universal_and_agents_package"
+        }
+      },
+      "maintainer": "prentice7725",
+      "capabilities": ["editorial_review", "content_clarity_surface_check", "separate_reader_diagnosis"],
+      "supported_hosts": ["claude", "codex", "antigravity", "generic", "*"],
+      "required_tools": ["read"],
+      "permission_scope": ["read_markdown"],
+      "conflicts": [],
+      "test_report": {
+        "audited_at": "2026-11-19",
+        "executable_scripts_present": false,
+        "network_access": false,
+        "cross_provider_calls": false,
+        "notes": "Verified local Claude plugin v1.0.2 (Markdown/JSON only) and packaged MIT-attributed Codex skill rules with identical references_digest."
+      },
+      "status": "approved",
+      "last_reviewed": "2026-11-19"
+    },
+    {
+      "id": "spec-kit",
+      "upstream_url": "https://github.com/github/spec-kit",
+      "commit_or_release": "unpinned",
+      "license": "MIT",
+      "files_digest": "unverified",
+      "maintainer": "github",
+      "capabilities": ["sdd", "clarify", "plan", "tasks"],
+      "supported_hosts": ["claude", "codex"],
+      "required_tools": ["read", "write"],
+      "permission_scope": ["read_project", "write_docs"],
+      "conflicts": [],
+      "test_report": {
+        "audited_at": null,
+        "notes": "M1 evaluation candidate; not yet audited or pinned."
+      },
+      "status": "candidate",
+      "last_reviewed": "2026-11-19"
+    },
+    {
+      "id": "superpowers",
+      "upstream_url": "https://github.com/obra/superpowers",
+      "commit_or_release": "unpinned",
+      "license": "MIT",
+      "files_digest": "unverified",
+      "maintainer": "obra",
+      "capabilities": ["brainstorming", "writing_plans", "tdd", "subagent_workflow"],
+      "supported_hosts": ["claude"],
+      "required_tools": ["read", "write", "subagents"],
+      "permission_scope": ["read_project", "write_project"],
+      "conflicts": ["crafthelm-interview", "crafthelm-plan"],
+      "test_report": {
+        "audited_at": null,
+        "notes": "M0-M1 candidate; requires skill conflict resolution before approval."
+      },
+      "status": "candidate",
+      "last_reviewed": "2026-11-19"
+    },
+    {
+      "id": "mattpocock-skills",
+      "upstream_url": "https://github.com/mattpocock/skills",
+      "commit_or_release": "unpinned",
+      "license": "MIT",
+      "files_digest": "unverified",
+      "maintainer": "mattpocock",
+      "capabilities": ["task_dag", "code_review", "tdd", "diagnosing_bugs"],
+      "supported_hosts": ["claude"],
+      "required_tools": ["read", "bash"],
+      "permission_scope": ["read_project"],
+      "conflicts": [],
+      "test_report": {
+        "audited_at": null,
+        "notes": "M1 selective integration candidate."
+      },
+      "status": "candidate",
+      "last_reviewed": "2026-11-19"
+    },
+    {
+      "id": "pstack",
+      "upstream_url": "https://github.com/cursor/plugins/tree/main/pstack",
+      "commit_or_release": "unpinned",
+      "license": "unknown-review-required",
+      "files_digest": "unverified",
+      "maintainer": "cursor",
+      "capabilities": ["findings_triage", "review_workflow"],
+      "supported_hosts": [],
+      "required_tools": ["read"],
+      "permission_scope": ["read_project"],
+      "conflicts": [],
+      "test_report": {
+        "audited_at": null,
+        "notes": "Research candidate; license and host compatibility must be verified before adoption."
+      },
+      "status": "discovery",
+      "last_reviewed": "2026-11-19"
+    },
+    {
+      "id": "hf-game-studio",
+      "upstream_url": "https://github.com/prentice7725/hf-game-studio",
+      "commit_or_release": "unpinned",
+      "license": "MIT",
+      "files_digest": "unverified",
+      "maintainer": "prentice7725",
+      "capabilities": ["game_acceptance_gates", "sot_audit"],
+      "supported_hosts": ["claude", "codex"],
+      "required_tools": ["read"],
+      "permission_scope": ["read_project"],
+      "conflicts": [],
+      "test_report": {
+        "audited_at": null,
+        "notes": "Optional domain pattern reference."
+      },
+      "status": "discovery",
+      "last_reviewed": "2026-11-19"
+    }
+  ]
+}

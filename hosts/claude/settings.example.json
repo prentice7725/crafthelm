@@ -1,0 +1,22 @@
+{
+  "host": "claude",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Bash(node scripts/*)",
+      "Bash(npm test*)",
+      "Bash(git status*)",
+      "Bash(git diff*)"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(rm -rf*)"
+    ]
+  },
+  "crafthelm": {
+    "require_kouetsu": true,
+    "protect_base_ref": true,
+    "allow_cross_provider_fallback": false
+  }
+}

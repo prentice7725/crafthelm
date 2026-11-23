@@ -1,0 +1,139 @@
+/**
+ * Authoritative CraftHelm execution state machine (Section 5.2).
+ * `COMPLETE` is explicitly forbidden to prevent confusing technical verification with human acceptance.
+ */
+export const STATES = Object.freeze({
+  NEW: 'NEW',
+  DISCOVERY: 'DISCOVERY',
+  INTERVIEWING: 'INTERVIEWING',
+  CONTRACT_PENDING: 'CONTRACT_PENDING',
+  READY: 'READY',
+  RUNNING_STAGE: 'RUNNING_STAGE',
+  VERIFYING: 'VERIFYING',
+  REVIEWING: 'REVIEWING',
+  REPAIRING: 'REPAIRING',
+  REVIEW_PACKAGE_DRAFT: 'REVIEW_PACKAGE_DRAFT',
+  READY_FOR_HUMAN_REVIEW: 'READY_FOR_HUMAN_REVIEW',
+  ACCEPTED: 'ACCEPTED',
+  CHANGES_REQUESTED: 'CHANGES_REQUESTED',
+  REJECTED: 'REJECTED',
+  HANDOFF: 'HANDOFF',
+  CLOSED_UNACCEPTED: 'CLOSED_UNACCEPTED',
+  PAUSED: 'PAUSED',
+  BLOCKED: 'BLOCKED',
+  BLOCKED_HUMAN_ATTENTION: 'BLOCKED_HUMAN_ATTENTION',
+  ABORTED: 'ABORTED',
+  RECONCILING: 'RECONCILING',
+  APPROVAL_REQUIRED: 'APPROVAL_REQUIRED',
+  REPLAN_REQUIRED: 'REPLAN_REQUIRED',
+});
+
+export const FORBIDDEN_STATES = Object.freeze(['COMPLETE']);
+
+export const WATERFALL_GATED_STAGES = Object.freeze([
+  'requirements',
+  'architecture',
+  'detailed_design',
+  'integration',
+  'human_acceptance',
+]);
+
+const ACTIVE_PAUSEABLE = [
+  STATES.DISCOVERY,
+  STATES.INTERVIEWING,
+  STATES.CONTRACT_PENDING,
+  STATES.READY,
+  STATES.RUNNING_STAGE,
+  STATES.VERIFYING,
+  STATES.REVIEWING,
+  STATES.REPAIRING,
+  STATES.REVIEW_PACKAGE_DRAFT,
+];
+
+export const ALLOWED_TRANSITIONS = Object.freeze({
+  [STATES.NEW]: [STATES.DISCOVERY, STATES.PAUSED, STATES.BLOCKED, STATES.ABORTED],
+  [STATES.DISCOVERY]: [STATES.INTERVIEWING, STATES.PAUSED, STATES.BLOCKED, STATES.ABORTED],
+  [STATES.INTERVIEWING]: [STATES.CONTRACT_PENDING, STATES.PAUSED, STATES.BLOCKED, STATES.ABORTED],
+  [STATES.CONTRACT_PENDING]: [STATES.READY, STATES.PAUSED, STATES.BLOCKED, STATES.ABORTED],
+  [STATES.READY]: [STATES.RUNNING_STAGE, STATES.VERIFYING, STATES.REPAIRING, STATES.APPROVAL_REQUIRED, STATES.REPLAN_REQUIRED, STATES.PAUSED, STATES.BLOCKED, STATES.BLOCKED_HUMAN_ATTENTION, STATES.ABORTED],
+  [STATES.RUNNING_STAGE]: [STATES.VERIFYING, STATES.APPROVAL_REQUIRED, STATES.REPLAN_REQUIRED, STATES.PAUSED, STATES.BLOCKED, STATES.BLOCKED_HUMAN_ATTENTION, STATES.ABORTED],
+  [STATES.VERIFYING]: [STATES.REVIEWING, STATES.REPAIRING, STATES.REVIEW_PACKAGE_DRAFT, STATES.BLOCKED, STATES.BLOCKED_HUMAN_ATTENTION, STATES.PAUSED, STATES.ABORTED],
+  [STATES.REVIEWING]: [STATES.REPAIRING, STATES.REVIEW_PACKAGE_DRAFT, STATES.VERIFYING, STATES.BLOCKED, STATES.BLOCKED_HUMAN_ATTENTION, STATES.PAUSED, STATES.ABORTED],
+  [STATES.REPAIRING]: [STATES.RUNNING_STAGE, STATES.VERIFYING, STATES.BLOCKED_HUMAN_ATTENTION, STATES.BLOCKED, STATES.PAUSED, STATES.ABORTED],
+  [STATES.REVIEW_PACKAGE_DRAFT]: [STATES.READY_FOR_HUMAN_REVIEW, STATES.BLOCKED, STATES.REPAIRING, STATES.PAUSED, STATES.ABORTED],
+  [STATES.READY_FOR_HUMAN_REVIEW]: [STATES.ACCEPTED, STATES.CHANGES_REQUESTED, STATES.REJECTED, STATES.VERIFYING, STATES.BLOCKED, STATES.PAUSED, STATES.ABORTED],
+  [STATES.ACCEPTED]: [STATES.HANDOFF, STATES.REPLAN_REQUIRED, STATES.PAUSED],
+  [STATES.CHANGES_REQUESTED]: [STATES.REPAIRING, STATES.REPLAN_REQUIRED, STATES.RUNNING_STAGE, STATES.VERIFYING, STATES.PAUSED, STATES.ABORTED],
+  [STATES.REJECTED]: [STATES.CLOSED_UNACCEPTED, STATES.REPLAN_REQUIRED],
+  [STATES.HANDOFF]: [],
+  [STATES.CLOSED_UNACCEPTED]: [],
+  [STATES.PAUSED]: [STATES.RECONCILING, STATES.ABORTED],
+  [STATES.RECONCILING]: [STATES.READY, STATES.APPROVAL_REQUIRED, STATES.REPLAN_REQUIRED, STATES.BLOCKED, STATES.ABORTED],
+  [STATES.APPROVAL_REQUIRED]: [STATES.READY, STATES.RUNNING_STAGE, STATES.REPLAN_REQUIRED, STATES.ABORTED],
+  [STATES.REPLAN_REQUIRED]: [STATES.INTERVIEWING, STATES.CONTRACT_PENDING, STATES.READY, STATES.ABORTED],
+  [STATES.BLOCKED]: [STATES.READY, STATES.RUNNING_STAGE, STATES.VERIFYING, STATES.REVIEW_PACKAGE_DRAFT, STATES.REPLAN_REQUIRED, STATES.ABORTED],
+  [STATES.BLOCKED_HUMAN_ATTENTION]: [STATES.REPAIRING, STATES.REPLAN_REQUIRED, STATES.VERIFYING, STATES.ABORTED, STATES.REJECTED],
+  [STATES.ABORTED]: [],
+});
+
+/**
+ * Validate that a state name is known and not forbidden (`COMPLETE`).
+ * @param {string} state
+ */
+export function assertValidState(state) {
+  if (FORBIDDEN_STATES.includes(state)) {
+    throw new Error(`FORBIDDEN_STATE: "${state}" is prohibited in CraftHelm; automation terminates at READY_FOR_HUMAN_REVIEW`);
+  }
+  if (!Object.hasOwn(STATES, state)) {
+    throw new Error(`INVALID_STATE: Unknown state "${state}"`);
+  }
+}
+
+/**
+ * Check whether transition `from -> to` is structurally permitted.
+ * @param {string} from
+ * @param {string} to
+ * @returns {boolean}
+ */
+export function canTransition(from, to) {
+  assertValidState(from);
+  assertValidState(to);
+  if (from === to) return true;
+  if ((to === STATES.PAUSED || to === STATES.BLOCKED || to === STATES.ABORTED) && ACTIVE_PAUSEABLE.includes(from)) {
+    return true;
+  }
+  return (ALLOWED_TRANSITIONS[from] ?? []).includes(to);
+}
+
+/**
+ * Assert and validate a state transition including accountability invariants.
+ * @param {string} from
+ * @param {string} to
+ * @param {{ humanDecision?: object, contract?: object, stageApprovals?: object, targetStage?: string }} [context]
+ */
+export function assertTransition(from, to, context = {}) {
+  assertValidState(from);
+  assertValidState(to);
+  if (!canTransition(from, to)) {
+    throw new Error(`INVALID_TRANSITION: Transition ${from} -> ${to} is not permitted`);
+  }
+
+  if (to === STATES.ACCEPTED) {
+    if (from !== STATES.READY_FOR_HUMAN_REVIEW) {
+      throw new Error(`ACCOUNTABILITY_BLOCK: Cannot enter ACCEPTED from ${from}; must pass READY_FOR_HUMAN_REVIEW first`);
+    }
+    const hd = context.humanDecision;
+    if (!hd || hd.decision !== 'accepted' || !hd.actor) {
+      throw new Error('ACCOUNTABILITY_BLOCK: Cannot enter ACCEPTED without an explicit human approval decision record');
+    }
+  }
+
+  if (
+    to === STATES.RUNNING_STAGE &&
+    context.contract?.methodology?.lifecycle === 'waterfall' &&
+    context.requiredPriorGate &&
+    !context.stageApprovals?.[context.requiredPriorGate]?.approved
+  ) {
+    throw new Error(`WATERFALL_GATE_BLOCKED: Stage "${context.requiredPriorGate}" requires explicit human stage approval before advancing`);
+  }
+}

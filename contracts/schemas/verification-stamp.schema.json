@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/verification-stamp.schema.json",
+  "title": "CraftHelm Verification Stamp",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "target_snapshot_digest",
+    "baseline_git_head",
+    "policy_base_ref",
+    "policy_digest",
+    "policy_source",
+    "verification_level",
+    "stale",
+    "checks",
+    "reliability_rules_evaluated",
+    "review",
+    "unverified",
+    "human_acceptance",
+    "stamped_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.3" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "target_snapshot_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "baseline_git_head": { "type": "string", "minLength": 1 },
+    "policy_base_ref": { "type": "string", "minLength": 1 },
+    "policy_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "policy_source": { "type": "string", "enum": ["base_ref_git_show", "external_protected_dir", "contract_default"] },
+    "verification_level": { "type": "string", "enum": ["none", "partial", "verified"] },
+    "stale": { "type": "boolean" },
+    "impact_analysis_file": { "type": ["string", "null"] },
+    "regression_mode": { "type": "string", "enum": ["full", "selective", "fallback_to_full"] },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "type": "string" },
+          "status": { "type": "string" },
+          "evidence_ref": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "reliability_rules_evaluated": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "triggered", "policy_mode", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "triggered": { "type": "boolean" },
+          "non_trigger_reason": { "type": "string" },
+          "policy_mode": { "type": "string" },
+          "status": { "type": "string" },
+          "evidence_ref": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string" },
+        "target_snapshot_digest": { "type": ["string", "null"] }
+      }
+    },
+    "unverified": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "human_acceptance": {
+      "type": "string",
+      "enum": ["PENDING", "ACCEPTED", "CHANGES_REQUESTED", "REJECTED", "VERIFICATION_REQUESTED"]
+    },
+    "stamped_at": { "type": "string", "minLength": 1 }
+  }
+}

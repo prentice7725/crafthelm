@@ -1,0 +1,29 @@
+{
+  "name": "crafthelm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "CraftHelm — Single-provider, interview-first, methodology-composable, evidence-driven development operating framework",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "crafthelm": "./scripts/crafthelm.mjs"
+  },
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "doctor:claude": "node scripts/doctor.mjs --host claude",
+    "doctor:codex": "node scripts/doctor.mjs --host codex",
+    "doctor:antigravity": "node scripts/doctor.mjs --host antigravity",
+    "doctor:generic": "node scripts/doctor.mjs --host generic",
+    "crafthelm": "node scripts/crafthelm.mjs",
+    "install:skills": "node scripts/install-skills.mjs --targets all",
+    "install:skills:claude": "node scripts/install-skills.mjs --targets claude",
+    "install:skills:codex": "node scripts/install-skills.mjs --targets codex",
+    "install:skills:gemini": "node scripts/install-skills.mjs --targets gemini",
+    "skills:status": "node scripts/install-skills.mjs --status",
+    "benchmark": "node scripts/benchmark.mjs"
+  }
+}

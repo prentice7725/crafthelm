@@ -1,0 +1,163 @@
+---
+name: kouetsu
+description: Use this skill whenever you draft, rewrite, or review prose that other people will read, even if the user does not name it - PR descriptions, commit messages, READMEs, design docs, specs, RFCs, incident postmortems, reports, proposals, emails, team updates, and articles. Not for code, fiction, or one-line answers. Checks content ownership, sentence clarity, and skip-triggering stock patterns, in that order, so the reader does not pay for effort the writer saved. Includes Korean, Japanese, and English patterns.
+---
+
+> Codex Host Skill Package — derived from `prentice7725/kouetsu` v1.0.2 (MIT, https://github.com/prentice7725/kouetsu). Runs natively inside Codex without calling any external LLM provider CLI. See `NOTICE.md` and `LICENSE`.
+
+# kouetsu
+
+Kouetsu (校閲, 교열) is the editor's check of a text before it reaches readers: facts, consistency, and whether the reader can follow it.
+
+Slop is not "text written by AI". Slop is **text where the writer saved effort and the reader pays for it**.
+If the reader has to work out what is true, what matters, or what a sentence means, the text is slop.
+
+Readers who meet slop often enough stop reading anything that looks like it. Correct content then goes unread.
+So check three layers in order. Fixing a lower layer is pointless while the one above it is empty.
+
+1. **Content**: is there something to say, and can the writer stand behind it?
+2. **Clarity**: can each sentence be read without decoding?
+3. **Surface**: are there stock patterns that make the reader skip before reading?
+
+## Scope
+
+- Applies to text people read: docs, reports, messages, email, articles, summaries, answers, and text around code such as commit messages, PR descriptions, and READMEs.
+- Does not review code itself (structure, quality, commented-out code).
+- Does not apply to fiction or poetry.
+- Apply in the language of the text. For layer 3, read the reference file for that language.
+
+## Layer 1: Content
+
+Before writing, answer five questions in one line each.
+
+- **Reader**: who reads this, and how much of this conversation or task do they know?
+- **Promise**: what should the reader know or be able to do afterwards?
+- **Point**: what does the text say in one sentence? Could someone disagree with it?
+- **Evidence**: which claims need a source, data, or a run result? Do you have it?
+- **Addition**: what does this add beyond what the reader knows or could search for?
+
+### When an answer is missing
+
+Sort each gap first: is it yours to decide, or the reader's to answer?
+
+- **Decide it** when the answer follows from precedent (the source or earlier work already settled the same kind of question) or from common practice that a competent person in the field would not dispute. Write the decision and the reason, and label it as your decision so the reader can overrule it. In long text, collect the decisions in one place.
+- **Ask** when the answer depends on the reader's own business rules, money, people, or policy, or when two reasonable people would choose differently.
+- Test: would you be surprised if the owner chose the opposite? If yes, decide. If no, ask.
+- A decision is a choice you own. A fact must be true. Never decide a fact: do not fill a gap with a plausible example, anecdote, number, or source.
+
+How to ask depends on the size of the text.
+
+- **Long text** (documents, articles, reports, proposals, design docs: several paragraphs that the reader spends time on): ask the user before writing. One or two questions at a time, starting with the one that shapes the text most.
+- **Short text** (messages, email, commits, short answers, one- or two-paragraph summaries): write without asking. Do not invent the missing part. Mark it as `[needs confirmation: what]`, written in the language of the text, and list the marks in one line at the end.
+- For every question or mark, say who can answer and what stays blocked until they do. Give a date only when the source has a schedule to derive it from.
+
+### Rules
+
+- Separate what was verified from what was not. Do not mix what you ran, what you only read, and what you inferred.
+- If there is nothing to add, write less or do not write. Do not cover a gap with volume.
+- Length is review cost for the reader, so cut what the reader will not use. Never cut what the reader needs in order to act: identifiers, numbers, definitions, and decisions that the next person would otherwise have to invent. A specification that is short because it leaves these out costs the reader more.
+- Every paragraph must serve the promise. Cut paragraphs that do not, even when they are true.
+- Terms and actors must agree across sections. Every term the text uses is defined, every defined term is used, and the same people appear wherever the text lists users, permissions, or recipients.
+
+## Layer 2: Clarity
+
+Ask three questions of every sentence.
+
+### Is it obvious who does what?
+
+- Do not turn actions into nouns. "Validation was performed" → "The test suite validated the input"
+- Avoid passives with no actor. "The cache was changed to be invalidated" → "`save()` invalidates the cache right after writing"
+- Do not use abstract nouns as subjects. The subject is the real actor: a person, a function, a team, or you.
+- Leave the sentence alone when the actor truly does not matter or the order is deliberate emphasis.
+- Name only actors the source states. If the source does not say who acts, do not infer one, even when the guess is plausible. Ask, or mark it `[needs confirmation]`.
+
+### Does the reader know what every term refers to?
+
+- Replace pointers ("this", "that part", "the approach above") with names.
+- Unpack noun stacks with verbs. "token refresh failure handling logic improvement" → "when token refresh fails, the app now sends the user to the login screen"
+- Do not give plain things grand names. A config file is not a "configuration orchestration layer".
+- Labels coined during the work ("approach B", "the new pipeline") are unknown to the reader. Spell them out or use the real name.
+- Replace evaluative words with numbers and conditions. "much faster" → "p95 latency 420ms → 180ms". If there is no number, say so.
+- Do not drop articles, particles, or connectives to save space. Telegraphic text is ambiguous.
+
+### Would the reader lose anything if this were deleted?
+
+- Put the conclusion, result, or request in the first sentence. Background and process come after.
+- Delete sentences that carry no information: restating the question, announcing that something is important, a closing summary that repeats the body.
+- State what the reader must do (confirm, decide, run) in its own sentence, with who does what.
+- Do not bury failures or unfinished work among successes.
+
+## Layer 3: Surface
+
+The patterns below signal "not worth reading". Most are symptoms of layer 1 or 2 defects, so **fix the cause first, then delete what remains**. This is not a banned-word list. People write these too, and one or two instances are fine. Fix them when they repeat. A short sentence that introduces a list or table is not signposting. Leave it.
+
+### All languages
+
+| Pattern | Fix |
+|---|---|
+| Inflated significance: a small change presented as a breakthrough or turning point | Say what actually changes. If nothing does, delete |
+| Negative parallelism: denying a claim nobody made, then stating the point | State the point |
+| Reflexive triplets: adjectives or items always in threes | Use the real count, and only items you can support |
+| Empty tails: clauses tacked on to say something "shows the importance of" something | Replace with a concrete result, or delete |
+| Unsourced authority: "experts say", "it is widely known" | Name the source, or own the claim |
+| Stacked hedges: several qualifiers in one sentence | Hedge once, where the uncertainty is, with the reason |
+| Leaked reasoning: weighing options at length without deciding | Give the decision and the reason. Mention rejected options only if the reader would ask |
+| Heavy formatting: bold in every paragraph, headers on short text, an argument chopped into bullets | Format only what the reader will scan or compare |
+| Chat residue: opening with praise, closing with an offer to help | Delete |
+| Elegant variation: one thing called a different name in each sentence | One thing, one name |
+| Uniform rhythm: paragraphs of equal length, an aphorism closing each one | Write as much as the content needs |
+
+### Per-language patterns
+
+Read only the file for the language of the text.
+
+- Korean: `references/ko.md`
+- Japanese: `references/ja.md`
+- English: `references/en.md`
+
+## Handing off
+
+When passing the result to a person or another agent, add:
+
+- what you verified directly and what you could not
+- the points where the reader must decide, and what they need to decide
+- the boundary between material the user gave you and what you added (especially if the user will publish under their own name)
+- the list of remaining `[needs confirmation]` marks
+- for long text, whether a separate reviewer checked consistency and gaps
+
+Text you hand off stays in docs, chat, and repos and becomes source material for the next text. Wrong or empty sentences get copied from there.
+
+## Workflow
+
+**Writing new text**
+
+1. Answer the five layer-1 questions. Handle gaps as described in "When an answer is missing".
+2. Write the point in one sentence. If you cannot, it is not time to write yet.
+3. For long text, show an outline first and get confirmation. Check that each section serves the promise.
+4. Write the draft.
+5. Check layer 2 sentence by sentence. Fix only the sentences that fail.
+6. For layer 3, check the all-languages table and the reference file for the language. Count the hits of each listed pattern, and bold labels and headers. Models miscount by eye, so count with a search tool, one pattern at a time: a search that returns a match count, or `grep -c -E` where you can run commands. Search table cells too. Fix any pattern that appears more than twice, starting from the cause.
+7. Check consistency and test with a reader. Compare every decision, defined term, and list of people against the body. Each must say the same thing wherever it appears. For long text, do not rely on your own reread: writers miss their own contradictions, and they cannot see what the text leaves out because they already know it. Hand a separate reviewer the finished text and your one-line answer to the layer-1 Reader question, and nothing else. The reviewer is a subagent. When you cannot start one, give the user a ready-to-paste prompt that contains the reviewer instructions, the reader line, and the text, and ask them to run it in a new conversation and bring back the findings. Ask it to run "Diagnosis only" and report every `[inconsistent]` pair and every `[blindspot]`. Fix what it reports. If no separate reviewer ran, say in the hand-off that only the writer checked consistency and gaps.
+8. Reread from the top: does a reader who stops after two sentences know the point?
+
+**Revising existing text**
+
+- Do not change facts or the author's voice. Do not touch sentences that have no problem.
+- Do not supply information the original lacks (actor, number, source). For long text, ask the author. For short text, mark `[needs confirmation]`.
+- If layer 1 is empty (no point, no evidence), say so before polishing sentences.
+
+**Diagnosis only**
+
+- Number the sentences before tagging: `[S1]`, `[S2]`, and so on. Write the numbered text out before tagging. Refer to sentences by number, and take the total from the last number, not from an estimate.
+- Report by layer, layer 1 first.
+- Tag sentences: `[actor]` `[vague]` `[empty]` `[buried]` `[pattern:name]`. Use `[buried]` when a failure, risk, or request sits where the reader will miss it.
+- Tag mismatches between sections as `[inconsistent]` and name both places. Check four things: decisions against the body, defined terms against their uses, lists of people against each other, and cross-references (section numbers, IDs) against their targets.
+- Test the text as its reader. Take the reader the writer named, or infer one from the text. List 5 to 10 questions that reader would bring to the text, and answer each from the text alone. Tag `[blindspot]` wherever the answer is missing, or the reader would have to guess, or the text assumes knowledge the reader does not have. Say which question exposed it.
+- Report defective sentences over total sentences, using the numbering.
+- Do not judge whether the text "looks AI-written". This skill measures reader cost, not origin.
+
+## Limits
+
+- These checks are a floor. Passing them does not make text good.
+- Do not use this to pass layer 3 alone. Slop with the patterns removed is slop that is harder to spot.
+- The person who sends the text owns it. This skill exposes the points where they must judge. It does not judge for them.

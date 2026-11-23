@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/evidence.schema.json",
+  "title": "CraftHelm Evidence Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "contract_sha256",
+    "baseline_git_head",
+    "final_tree_hash",
+    "target_snapshot_digest",
+    "skill_lock_sha256",
+    "verification_stamp_file",
+    "verification_level",
+    "checks",
+    "reliability_checks",
+    "review",
+    "scope",
+    "technical_status",
+    "human_review"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["0.1", "0.2", "0.3"] },
+    "run_id": { "type": "string", "minLength": 1 },
+    "contract_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "baseline_git_head": { "type": "string", "minLength": 1 },
+    "final_tree_hash": { "type": "string", "minLength": 1 },
+    "target_snapshot_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "skill_lock_sha256": { "type": "string", "pattern": "^([a-f0-9]{64}|none)$" },
+    "verification_stamp_file": { "type": "string", "minLength": 1 },
+    "verification_level": { "type": "string", "enum": ["none", "partial", "verified"] },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "status"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "requirement": { "type": "string" },
+          "kind": { "type": "string", "enum": ["fast", "unit", "test", "e2e", "property", "differential", "manual"] },
+          "command": { "type": "string" },
+          "exit_code": { "type": ["integer", "null"] },
+          "status": { "type": "string", "enum": ["PASS", "FAIL", "BLOCKED", "UNVERIFIED", "NOT_APPLICABLE", "SKIPPED_UNIMPACTED"] },
+          "reason": { "type": "string" },
+          "selection_reason": { "type": "string" },
+          "duration_ms": { "type": "integer", "minimum": 0 },
+          "stdout_file": { "type": "string" },
+          "stderr_file": { "type": "string" },
+          "counterexample_file": { "type": "string" },
+          "seed": { "type": ["string", "number", "null"] },
+          "diff_report_file": { "type": "string" }
+        }
+      }
+    },
+    "reliability_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "triggered", "policy_mode", "status"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "triggered": { "type": "boolean" },
+          "non_trigger_reason": { "type": "string" },
+          "policy_mode": { "type": "string", "enum": ["off", "observe", "enforce"] },
+          "severity": { "type": "string", "enum": ["must_fix", "should_fix", "nit"] },
+          "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIPPED", "OBSERVED_FAIL", "BLOCKED"] },
+          "evidence_file": { "type": "string" }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["PASS", "FINDINGS", "UNVERIFIED", "STALE", "NOT_RUN"] },
+        "findings_file": { "type": ["string", "null"] },
+        "target_snapshot_digest": { "type": ["string", "null"] },
+        "independent_cross_model": { "type": "boolean" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "required": ["status", "diff_file", "changed_files", "out_of_scope_files", "protected_violations"],
+      "properties": {
+        "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+        "diff_file": { "type": "string", "minLength": 1 },
+        "changed_files": { "type": "array", "items": { "type": "string" } },
+        "out_of_scope_files": { "type": "array", "items": { "type": "string" } },
+        "protected_violations": { "type": "array", "items": { "type": "string" } },
+        "policy_tamper_detected": { "type": "boolean" }
+      }
+    },
+    "technical_status": {
+      "type": "string",
+      "enum": ["VERIFIED", "PARTIAL", "FAILED", "BLOCKED", "STALE"]
+    },
+    "failure_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "impact_analysis_file": { "type": ["string", "null"] },
+    "feedback_packet_file": { "type": ["string", "null"] },
+    "regression_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "fallback_to_full", "total_checks", "executed_count", "skipped_count", "selected_tests", "unselected_tests"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["full", "selective", "fallback_to_full"] },
+        "fallback_to_full": { "type": "boolean" },
+        "fallback_reason": { "type": ["string", "null"] },
+        "total_checks": { "type": "integer", "minimum": 0 },
+        "executed_count": { "type": "integer", "minimum": 0 },
+        "skipped_count": { "type": "integer", "minimum": 0 },
+        "selected_tests": { "type": "array", "items": { "type": "string" } },
+        "unselected_tests": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "human_review": {
+      "type": "object",
+      "required": ["status", "package_file", "package_sha256"],
+      "properties": {
+        "status": { "type": "string", "enum": ["PENDING", "READY_FOR_HUMAN_REVIEW", "ACCEPTED", "CHANGES_REQUESTED", "REJECTED", "BLOCKED"] },
+        "package_file": { "type": ["string", "null"] },
+        "package_sha256": { "type": ["string", "null"] },
+        "editorial_report_file": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

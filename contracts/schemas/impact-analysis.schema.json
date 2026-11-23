@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/impact-analysis.schema.json",
+  "title": "CraftHelm AST & Call-Graph Impact Analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "base_ref",
+    "directly_changed_files",
+    "directly_changed_functions",
+    "directly_changed_classes",
+    "impacted_functions",
+    "impacted_files",
+    "impacted_features",
+    "test_candidates",
+    "selected_tests",
+    "unselected_tests",
+    "recommended_test_command",
+    "fallback_to_full",
+    "fallback_reason",
+    "graph_stats",
+    "analyzed_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.3" },
+    "base_ref": { "type": "string", "minLength": 1 },
+    "directly_changed_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "directly_changed_functions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "directly_changed_classes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "impacted_functions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "impacted_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "impacted_features": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "test_candidates": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "selected_tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "reasons"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1 },
+          "reasons": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "unselected_tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "reason"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "recommended_test_command": { "type": ["string", "null"] },
+    "fallback_to_full": { "type": "boolean" },
+    "fallback_reason": { "type": ["string", "null"] },
+    "graph_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files_parsed", "functions_indexed", "classes_indexed", "import_edges", "call_edges"],
+      "properties": {
+        "files_parsed": { "type": "integer", "minimum": 0 },
+        "functions_indexed": { "type": "integer", "minimum": 0 },
+        "classes_indexed": { "type": "integer", "minimum": 0 },
+        "import_edges": { "type": "integer", "minimum": 0 },
+        "call_edges": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "languages_detected": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "test_runner": { "type": ["string", "null"] },
+    "recommended_test_commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["language", "runner", "command", "tests"],
+        "properties": {
+          "language": { "type": "string", "minLength": 1 },
+          "runner": { "type": "string", "minLength": 1 },
+          "command": { "type": "string", "minLength": 1 },
+          "tests": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "analyzer_source": {
+      "type": "string",
+      "enum": ["builtin_polyglot", "custom_analyzer", "hybrid"]
+    },
+    "analyzed_at": { "type": "string", "minLength": 1 }
+  }
+}

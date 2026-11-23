@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/reliability-rule.schema.json",
+  "title": "CraftHelm Diff-Triggered Reliability Rule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "source", "trigger", "check", "severity", "policy_mode", "status", "owner"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paths"],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "changed_symbols": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id"],
+      "properties": {
+        "skill": { "type": "string", "minLength": 1 },
+        "command_id": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 }
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["must_fix", "should_fix", "nit"]
+    },
+    "policy_mode": {
+      "type": "string",
+      "enum": ["off", "observe", "enforce"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "observe", "evaluated", "approved", "enforce", "retired"]
+    },
+    "owner": { "type": "string", "minLength": 1 }
+  }
+}

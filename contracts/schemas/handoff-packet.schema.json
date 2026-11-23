@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/handoff-packet.schema.json",
+  "title": "CraftHelm Structured Handoff Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "task_id",
+    "host",
+    "state",
+    "current_stage",
+    "target_snapshot_digest",
+    "baseline_git_head",
+    "tried_and_failed",
+    "open_questions",
+    "active_decisions",
+    "related_memory_hits",
+    "next_recommended_action",
+    "artifact_refs",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.3" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "host": { "type": "string", "minLength": 1 },
+    "state": { "type": "string", "minLength": 1, "not": { "const": "COMPLETE" } },
+    "current_stage": { "type": "string", "minLength": 1 },
+    "target_snapshot_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "baseline_git_head": { "type": "string", "minLength": 1 },
+    "blocked_reason": { "type": ["string", "null"] },
+    "tried_and_failed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["round", "cause_id"],
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "cause_id": { "type": "string", "minLength": 1 },
+          "check_id": { "type": "string" },
+          "repro_command": { "type": "string" },
+          "note": { "type": "string" },
+          "snapshot_digest": { "type": "string" },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "active_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "status", "source_path"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["active", "superseded", "decayed"] },
+          "supersedes": { "type": ["string", "null"] },
+          "source_path": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "related_memory_hits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "title", "status", "source_path", "score"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["active", "superseded", "decayed"] },
+          "superseded_by": { "type": ["string", "null"] },
+          "source_path": { "type": "string", "minLength": 1 },
+          "score": { "type": "number" },
+          "excerpt": { "type": "string" },
+          "decayed": { "type": "boolean" }
+        }
+      }
+    },
+    "next_recommended_action": { "type": "string", "minLength": 1 },
+    "artifact_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "generated_at": { "type": "string", "minLength": 1 }
+  }
+}

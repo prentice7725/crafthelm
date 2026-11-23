@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/editorial-report.schema.json",
+  "title": "CraftHelm Editorial Report (Kouetsu)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "host",
+    "kouetsu_skill_id",
+    "kouetsu_version",
+    "kouetsu_digest",
+    "executed",
+    "status",
+    "language",
+    "separate_reader_review",
+    "layers",
+    "findings",
+    "confirmation_markers",
+    "critical_confirmations",
+    "checked_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["0.2", "0.3"] },
+    "run_id": { "type": "string", "minLength": 1 },
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "kouetsu_skill_id": { "type": "string", "minLength": 1 },
+    "kouetsu_version": { "type": "string", "minLength": 1 },
+    "kouetsu_digest": { "type": ["string", "null"] },
+    "executed": { "type": "boolean" },
+    "status": { "type": "string", "enum": ["PASS", "FAIL", "MISSING", "BLOCKED"] },
+    "language": { "type": "string", "enum": ["ko", "ja", "en"] },
+    "separate_reader_review": {
+      "type": "string",
+      "enum": ["EXECUTED", "NOT_RUN_DETERMINISTIC_ONLY", "UNAVAILABLE"]
+    },
+    "layers": {
+      "type": "object",
+      "required": ["content", "clarity", "surface"],
+      "properties": {
+        "content": { "type": "string", "enum": ["PASS", "FAIL", "SKIPPED"] },
+        "clarity": { "type": "string", "enum": ["PASS", "FAIL", "SKIPPED"] },
+        "surface": { "type": "string", "enum": ["PASS", "FAIL", "SKIPPED"] }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["layer", "tag", "severity", "message"],
+        "properties": {
+          "layer": { "type": "string", "enum": ["content", "clarity", "surface"] },
+          "tag": { "type": "string", "minLength": 1 },
+          "severity": { "type": "string", "enum": ["critical", "error", "warning"] },
+          "sentence": { "type": "string" },
+          "pattern": { "type": "string" },
+          "count": { "type": "integer" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "confirmation_markers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["marker", "critical"],
+        "properties": {
+          "marker": { "type": "string" },
+          "section": { "type": "string" },
+          "critical": { "type": "boolean" }
+        }
+      }
+    },
+    "critical_confirmations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "checked_at": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/feedback-packet.schema.json",
+  "title": "CraftHelm Verification Feedback Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "task_id",
+    "round",
+    "repair_limit",
+    "status",
+    "failed_checks",
+    "impacted_functions",
+    "impacted_classes",
+    "impacted_features",
+    "scope_violation",
+    "root_cause_category",
+    "recommended_tier",
+    "decision_needed",
+    "escalate_to_human",
+    "artifact_refs",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.3" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "round": { "type": "integer", "minimum": 0 },
+    "repair_limit": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "enum": ["PASS", "FAIL", "ESCALATED"] },
+    "failed_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "status", "reason"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "exit_code": { "type": ["integer", "null"] },
+          "status": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "error_excerpt": { "type": "string" }
+        }
+      }
+    },
+    "impacted_functions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "impacted_classes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "impacted_features": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "scope_violation": { "type": "boolean" },
+    "root_cause_category": { "type": "string", "minLength": 1 },
+    "recommended_tier": {
+      "type": "string",
+      "enum": ["deterministic", "lightweight", "standard", "reasoning"]
+    },
+    "decision_needed": { "type": "string", "minLength": 1 },
+    "escalate_to_human": { "type": "boolean" },
+    "artifact_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "tried_and_failed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["round", "cause_id"],
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "cause_id": { "type": "string", "minLength": 1 },
+          "check_id": { "type": "string" },
+          "repro_command": { "type": "string" },
+          "note": { "type": "string" },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
+    "prior_memory_hits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "title", "status", "source_path", "score"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["active", "superseded", "decayed"] },
+          "source_path": { "type": "string", "minLength": 1 },
+          "score": { "type": "number" },
+          "excerpt": { "type": "string" },
+          "decayed": { "type": "boolean" }
+        }
+      }
+    },
+    "generated_at": { "type": "string", "minLength": 1 }
+  }
+}

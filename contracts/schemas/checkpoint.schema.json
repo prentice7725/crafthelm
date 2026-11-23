@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/checkpoint.schema.json",
+  "title": "CraftHelm Run Checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "task_id",
+    "host",
+    "state",
+    "current_stage",
+    "contract_sha256",
+    "baseline_git_head",
+    "target_snapshot_digest",
+    "repair_rounds",
+    "stage_history",
+    "stage_approvals",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["0.1", "0.2", "0.3"]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "NEW",
+        "DISCOVERY",
+        "INTERVIEWING",
+        "CONTRACT_PENDING",
+        "READY",
+        "RUNNING_STAGE",
+        "VERIFYING",
+        "REVIEWING",
+        "REPAIRING",
+        "REVIEW_PACKAGE_DRAFT",
+        "READY_FOR_HUMAN_REVIEW",
+        "ACCEPTED",
+        "CHANGES_REQUESTED",
+        "REJECTED",
+        "HANDOFF",
+        "CLOSED_UNACCEPTED",
+        "PAUSED",
+        "BLOCKED",
+        "BLOCKED_HUMAN_ATTENTION",
+        "ABORTED",
+        "RECONCILING",
+        "APPROVAL_REQUIRED",
+        "REPLAN_REQUIRED"
+      ],
+      "not": { "const": "COMPLETE" }
+    },
+    "current_stage": {
+      "type": "string",
+      "enum": [
+        "discover",
+        "interview",
+        "requirements",
+        "architecture",
+        "detailed_design",
+        "tasks",
+        "implementation",
+        "integration",
+        "technical_verification",
+        "review_package",
+        "human_acceptance",
+        "handoff"
+      ]
+    },
+    "contract_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "baseline_git_head": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_snapshot_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "skill_lock_sha256": {
+      "type": "string",
+      "pattern": "^([a-f0-9]{64}|none)$"
+    },
+    "protected_file_hashes": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "baseline_crafthelm_files": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "sot_hashes": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "repair_rounds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "stage_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "status", "recorded_at"],
+        "properties": {
+          "stage": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["started", "completed", "skipped", "invalidated", "blocked"] },
+          "reason": { "type": "string" },
+          "artifact_digest": { "type": "string" },
+          "recorded_at": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "stage_approvals": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["approved", "actor", "approved_at"],
+        "properties": {
+          "approved": { "type": "boolean" },
+          "actor": { "type": "string", "minLength": 1 },
+          "artifact_digest": { "type": "string" },
+          "rationale": { "type": "string" },
+          "approved_at": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "red_records": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["exit_code", "recorded_at"],
+        "properties": {
+          "exit_code": { "type": "integer" },
+          "snapshot_digest": { "type": "string" },
+          "stdout_file": { "type": "string" },
+          "stderr_file": { "type": "string" },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
+    "baseline_green_records": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["exit_code", "recorded_at"],
+        "properties": {
+          "exit_code": { "type": "integer" },
+          "snapshot_digest": { "type": "string" },
+          "stdout_file": { "type": "string" },
+          "stderr_file": { "type": "string" },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "cause_id": { "type": "string" },
+        "rounds_attempted": { "type": "integer" },
+        "escalation_file": { "type": "string" },
+        "escalated_at": { "type": "string" }
+      }
+    },
+    "replan_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["previous_contract_sha256", "new_contract_sha256", "reason", "invalidated_stages", "recorded_at"],
+        "properties": {
+          "previous_contract_sha256": { "type": "string" },
+          "new_contract_sha256": { "type": "string" },
+          "reason": { "type": "string" },
+          "invalidated_stages": { "type": "array", "items": { "type": "string" } },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
+    "last_decision_file": {
+      "type": "string"
+    },
+    "blocked_reason": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

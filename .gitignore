@@ -1,0 +1,6 @@
+.crafthelm/runs/
+.crafthelm/memory/index.sqlite*
+node_modules/
+*.tmp
+.DS_Store
+Thumbs.db

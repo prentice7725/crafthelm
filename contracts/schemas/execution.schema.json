@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/execution.schema.json",
+  "title": "CraftHelm Execution Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "request",
+    "project_root",
+    "host",
+    "methodology",
+    "scope",
+    "approval",
+    "budgets",
+    "acceptance",
+    "source_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["0.1", "0.2", "0.3"]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "host_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cli_command": { "type": "string", "minLength": 1 },
+        "version_args": { "type": "array", "items": { "type": "string" } },
+        "help_args": { "type": "array", "items": { "type": "string" } },
+        "exec_args": { "type": "array", "items": { "type": "string" } },
+        "model_flag": { "type": "string", "minLength": 1 },
+        "supports_json": { "type": "boolean" },
+        "supports_multi_model": { "type": "boolean" },
+        "in_session": { "type": "boolean" }
+      }
+    },
+    "change_kind": {
+      "type": "string",
+      "enum": ["feature", "bugfix", "refactor", "docs", "research"]
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "specification", "engineering", "execution"],
+      "properties": {
+        "lifecycle": {
+          "type": "string",
+          "enum": ["iterative", "incremental", "waterfall"]
+        },
+        "specification": {
+          "type": "string",
+          "enum": ["sdd", "lightweight", "existing"]
+        },
+        "engineering": {
+          "type": "string",
+          "enum": ["tdd", "test_after", "characterization_first"]
+        },
+        "execution": {
+          "type": "string",
+          "enum": ["full", "stage"]
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allow", "protect"],
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "protect": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_approved", "require_on"],
+      "properties": {
+        "contract_approved": { "type": "boolean" },
+        "contract_approved_by": { "type": "string", "minLength": 1 },
+        "contract_approved_at": { "type": "string", "minLength": 1 },
+        "require_on": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_worker_retries_per_cause", "max_lead_escalations", "max_wall_minutes"],
+      "properties": {
+        "max_worker_retries_per_cause": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "max_lead_escalations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_wall_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "acceptance": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/acceptanceItem"
+      }
+    },
+    "source_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "source_refs"],
+      "properties": {
+        "authority": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "source_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "sot_revisions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "editorial": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "require_kouetsu": { "type": "boolean" },
+        "language": { "type": "string", "enum": ["ko", "ja", "en"] },
+        "preset": { "type": "string", "enum": ["executive", "engineering", "handoff"] },
+        "require_separate_reader": { "type": "boolean" }
+      }
+    },
+    "verification_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy_base_ref": { "type": "string", "minLength": 1 },
+        "require_e2e_for_functional": { "type": "boolean" },
+        "reliability_rules_path": { "type": "string", "minLength": 1 },
+        "review_policy_path": { "type": "string", "minLength": 1 },
+        "protected_policy_paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "regression_mode": {
+          "type": "string",
+          "enum": ["full", "selective"]
+        },
+        "always_run_kinds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "test_file_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "global_fallback_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "test_command_template": { "type": "string", "minLength": 1 },
+        "test_command_templates": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "custom_impact_analyzer": { "type": "string", "minLength": 1 },
+        "ignored_dirs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "model_routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "escalate_on_retry": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "model_tiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lightweight": { "type": ["string", "null"] },
+            "standard": { "type": ["string", "null"] },
+            "reasoning": { "type": ["string", "null"] }
+          }
+        },
+        "host_profiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "lightweight": { "type": ["string", "null"] },
+              "standard": { "type": ["string", "null"] },
+              "reasoning": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "acceptanceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "requirement", "kind"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "requirement": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["fast", "unit", "test", "e2e", "property", "differential", "manual"]
+        },
+        "command": { "type": "string", "minLength": 1 },
+        "manual_method": { "type": "string", "minLength": 1 },
+        "expected_exit_code": { "type": "integer" },
+        "expected": { "type": "string", "minLength": 1 },
+        "baseline": { "type": "string" },
+        "baseline_command": { "type": "string", "minLength": 1 },
+        "allowed_diffs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "applicable": { "type": "boolean" },
+        "not_applicable_reason": { "type": "string", "minLength": 1 },
+        "require_red_first": { "type": "boolean" },
+        "target_files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "always_run": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "applicable": { "const": false } },
+            "required": ["applicable"]
+          },
+          "then": {
+            "required": ["not_applicable_reason"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "manual" } },
+            "not": {
+              "properties": { "applicable": { "const": false } },
+              "required": ["applicable"]
+            }
+          },
+          "then": {
+            "required": ["manual_method"]
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "anyOf": [
+                { "properties": { "kind": { "const": "manual" } } },
+                {
+                  "properties": { "applicable": { "const": false } },
+                  "required": ["applicable"]
+                }
+              ]
+            }
+          },
+          "then": {
+            "required": ["command"]
+          }
+        }
+      ]
+    }
+  }
+}
