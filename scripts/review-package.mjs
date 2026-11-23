@@ -76,7 +76,57 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     .map((c) => `\`${relFromReports(c.stdout_file)}\``)
     .join(', ') || '없음';
 
+  const strength = manifest.evidence_strength ?? { level: 'unknown', signals: [] };
+  const strengthLabel = {
+    strong: '강함 (STRONG)',
+    moderate: '보통 (MODERATE)',
+    weak: '약함 (EVIDENCE_WEAK)',
+    not_applicable: '해당 없음 (동작 변경 아님)',
+    unknown: 'unknown (측정 기록 없음)',
+  }[strength.level];
+  const strengthKo = {
+    NO_EXECUTED_PASSING_CHECK: ['실행되어 통과한 수용 기준이 없음', '변경된 동작을 직접 실행해 확인'],
+    NO_TEST_REACHES_CHANGE: ['변경된 코드를 불러오거나 호출하는 테스트 파일이 없음', '통과한 테스트가 변경 코드를 실제로 실행하는지 직접 확인'],
+    SINGLE_GENERIC_CHECK: ['실행된 검사가 범용 테스트 명령 하나뿐임', '이번 요청을 직접 단언하는 테스트가 있는지 확인'],
+    NO_TEST_CHANGED: ['동작이 바뀌었는데 추가되거나 수정된 테스트가 없음', '기존 테스트가 새 동작을 단언하는지 확인하거나 테스트 추가 요청'],
+    MUTANTS_SURVIVED: ['변경된 줄을 일부러 깨뜨렸는데도 통과한 검사가 실패하지 않은 경우가 있음', '`evidence/mutation-probe.json`의 살아남은 변이를 확인하고 해당 줄을 단언하는 테스트 요청'],
+    IMPACT_INCONCLUSIVE: ['영향도 분석이 그래프를 만들지 못해 테스트 도달 여부를 알 수 없음', '변경된 코드 경로를 표본으로 직접 확인'],
+  };
+  const strengthSummary = strength.signals.length > 0
+    ? strength.signals.map((s) => `\`${s.code}\``).join(', ')
+    : '신호 없음';
+
+  const delegation = manifest.delegation ?? { status: 'UNOBSERVED', record_count: 0, roles: [], tiers: [], models_requested: [] };
+  const delegationLabel = {
+    OBSERVED: '관측됨 (OBSERVED) — 스크립트가 워커를 실행하고 사용량을 기록',
+    SELF_REPORTED: '자기 보고 (SELF_REPORTED) — 세션 내 워커가 결과 패킷만 제출, 실행은 관측되지 않음',
+    MIXED: '혼합 (MIXED) — 관측 기록과 자기 보고가 섞여 있음',
+    UNOBSERVED: '관측 안 됨 (UNOBSERVED) — 위임 기록 없음. 역할·모델 분리가 실제로 있었는지 알 수 없음',
+  }[delegation.status];
+  const delegationDetail = delegation.record_count > 0
+    ? ` 기록 ${delegation.record_count}건, 역할 ${delegation.roles.join(', ') || 'none'}, 티어 ${delegation.tiers.join(', ') || 'none'}, 요청 모델 ${delegation.models_requested.join(', ') || 'unknown'}.`
+    : '';
+
+  const probe = manifest.mutation_probe ?? { status: 'NOT_REQUESTED', total: 0, killed: 0, survived: 0, evidence_file: null };
+  const probeStatusText = probe.status === 'PROBED'
+    ? `PROBED (제거 ${probe.killed}/${probe.total}, 생존 ${probe.survived})`
+    : probe.status;
+
+  const procProfile = manifest.process_profile ?? { profile: 'full', e2e_exempted: false };
+  const profileText = procProfile.profile === 'lite'
+    ? (procProfile.e2e_exempted
+        ? `**경량 (lite)** — E2E 요구 면제 적용. 조건 충족: 소스 파일 ${procProfile.observed.changed_source_files}/${procProfile.limits.max_changed_source_files}개, 추가 줄 ${procProfile.observed.added_lines}/${procProfile.limits.max_added_lines}줄, 증거 강도 \`${procProfile.observed.evidence_strength}\`. 실제 실행 흐름은 검증되지 않았음`
+        : '**경량 (lite)** — E2E 검사가 계약에 있어 면제를 쓰지 않음')
+    : '**전체 (full)** — 면제 없음';
+
   const riskRows = [];
+  if (procProfile.e2e_exempted) {
+    riskRows.push('| medium | 경량 프로필로 E2E 실행 검증을 면제함 | 단위 검사가 놓친 통합 문제는 드러나지 않음 | 변경된 동작을 실제 실행 흐름에서 직접 확인 | 승인자 |');
+  }
+  for (const sig of strength.signals) {
+    const [what, action] = strengthKo[sig.code] ?? [sig.detail, sig.human_check];
+    riskRows.push(`| ${sig.weight === 'weak' ? 'medium' : 'low'} | 증거 강도 신호 (${sig.code}): ${what} | PASS가 이번 변경을 충분히 보증하지 못할 수 있음 | ${action} | 승인자 |`);
+  }
   for (const item of unverifiedList) {
     riskRows.push(`| medium | 미검증 항목: ${item} | 사람이 직접 확인하지 않으면 누락 위험 | 승인 전 직접 확인 수행 | 승인자 |`);
   }
@@ -116,9 +166,13 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     '|---|---|',
     `| 작업 | \`${contract.task_id}\` — ${contract.title ?? contract.request} |`,
     `| 이번 승인 대상 | ${contract.scope.allow.join(', ')} (${manifest.scope.changed_files.length}개 파일 변경) |`,
+    `| 실행 계약 승인 | \`${contract.approval?.contract_approved_by ?? 'unknown'}\` — 승인 경로: \`${contract.approval?.contract_approved_via ?? 'unknown'}\` (\`agent_session\`이면 AI 세션 안에서 실행된 승인) |`,
     `| 승인하면 달라지는 것 | ${contract.request} |`,
     `| 자동 검증 상태 | **${manifest.technical_status}** — 근거: \`../evidence-manifest.json\` |`,
     `| 검증 수준 | **${manifest.verification_level}** — \`none/partial/verified\`는 수행된 기술 검사의 범위만 의미 |`,
+    `| 절차 프로필 | ${profileText} |`,
+    `| 작업 위임 | **${delegationLabel}**.${delegationDetail} |`,
+    `| 증거 강도 | **${strengthLabel}** — ${strengthSummary}. 통과한 검사가 이번 변경을 얼마나 직접 다루는지에 대한 기계적 등급 |`,
     `| 승인 대상 스냅샷 | \`${manifest.target_snapshot_digest}\` — 검증 스탬프: \`../${manifest.verification_stamp_file}\` |`,
     `| 실제 서비스/앱 실행 검증 | **${e2eStatus}** — 재현 링크: \`${e2eLink}\` |`,
     `| 아직 확인되지 않은 것 | ${unverifiedText} |`,
@@ -164,6 +218,7 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     `| E2E Smoke | ${e2eChecks.length > 0 ? '기능 동작 확인' : '계약에 미포함'} | ${e2eStatus} | \`${e2eLink}\` | 실제 실행 로그 확인 |`,
     `| Property | ${propCheck ? '불변식 검증' : '계약에 미포함'} | ${propCheck?.status ?? 'NOT_APPLICABLE'} | \`${propCheck?.counterexample_file ? relFromReports(propCheck.counterexample_file) : (propCheck?.stdout_file ? relFromReports(propCheck.stdout_file) : 'none')}\` | 경계값 시드 확인 |`,
     `| Differential | ${diffCheck ? '구버전 대조 검증' : '계약에 미포함'} | ${diffCheck?.status ?? 'NOT_APPLICABLE'} | \`${diffCheck?.diff_report_file ? relFromReports(diffCheck.diff_report_file) : 'none'}\` | 허용 차이 목록 확인 |`,
+    `| Mutation Probe | 변경된 줄을 깨뜨린 뒤 통과 검사 재실행 | ${probeStatusText} | \`${probe.evidence_file ? relFromReports(probe.evidence_file) : 'none'}\` | 살아남은 변이가 가리키는 줄 확인 |`,
     `| Reliability Rules | ${triggeredRules.length > 0 ? triggeredRules.map((r) => r.id).join(', ') : '매칭 규칙 없음'} | ${triggeredRules.length > 0 ? triggeredRules.map((r) => r.status).join(', ') : 'SKIPPED'} | \`../${manifest.verification_stamp_file}\` | observe 경고 검토 |`,
     '',
     `**검증 정책 기준:** \`${stamp.policy_base_ref}\` / \`${stamp.policy_digest}\`  `,
@@ -206,7 +261,7 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     '- **추가 검증:** 필요한 증거나 사용자 테스트를 지정합니다.',
     '- **반려:** 이번 산출물을 인수하지 않습니다.',
     '',
-    `결정이 입력될 때만 사람 승인 레코드를 생성합니다 (\`node scripts/approval.mjs record --repo . --run-id ${manifest.run_id} --decision accept --actor <이름> --rationale "<사유>"\`). AI가 이 칸을 임의로 채우거나 승인으로 해석하지 않습니다.`,
+    `결정이 입력될 때만 사람 승인 레코드를 생성합니다 (\`node scripts/approval.mjs record --repo . --run-id ${manifest.run_id} --decision accept --actor <이름> --rationale "<사유>"\`). 이 명령은 AI 세션 밖의 터미널에서 승인자가 직접 실행해야 하며, AI 세션 안에서는 거부됩니다. AI가 이 칸을 임의로 채우거나 승인으로 해석하지 않습니다.`,
     '',
   ].join('\n');
 }

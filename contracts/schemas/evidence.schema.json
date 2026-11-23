@@ -96,6 +96,101 @@
       "type": "string",
       "enum": ["VERIFIED", "PARTIAL", "FAILED", "BLOCKED", "STALE"]
     },
+    "evidence_strength": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "signals", "changed_source_files", "reaching_tests"],
+      "properties": {
+        "level": { "type": "string", "enum": ["strong", "moderate", "weak", "not_applicable"] },
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "weight", "detail", "human_check"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "NO_EXECUTED_PASSING_CHECK",
+                  "NO_TEST_REACHES_CHANGE",
+                  "SINGLE_GENERIC_CHECK",
+                  "NO_TEST_CHANGED",
+                  "MUTANTS_SURVIVED",
+                  "IMPACT_INCONCLUSIVE"
+                ]
+              },
+              "weight": { "type": "string", "enum": ["weak", "moderate"] },
+              "detail": { "type": "string", "minLength": 1 },
+              "human_check": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "changed_source_files": { "type": "array", "items": { "type": "string" } },
+        "reaching_tests": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "process_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "e2e_exempted", "violations", "limits", "observed"],
+      "properties": {
+        "profile": { "type": "string", "enum": ["full", "lite"] },
+        "e2e_exempted": { "type": "boolean" },
+        "violations": { "type": "array", "items": { "type": "string" } },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_changed_source_files", "max_added_lines"],
+          "properties": {
+            "max_changed_source_files": { "type": "integer", "minimum": 1 },
+            "max_added_lines": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "observed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["change_kind", "changed_source_files", "added_lines", "evidence_strength"],
+          "properties": {
+            "change_kind": { "type": "string" },
+            "changed_source_files": { "type": "integer", "minimum": 0 },
+            "added_lines": { "type": "integer", "minimum": 0 },
+            "evidence_strength": { "type": "string" }
+          }
+        }
+      }
+    },
+    "mutation_probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "total", "killed", "survived", "score", "evidence_file"],
+      "properties": {
+        "status": { "type": "string", "enum": ["NOT_REQUESTED", "PROBED", "NO_MUTABLE_LINES", "SKIPPED"] },
+        "total": { "type": "integer", "minimum": 0 },
+        "killed": { "type": "integer", "minimum": 0 },
+        "survived": { "type": "integer", "minimum": 0 },
+        "score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "evidence_file": { "type": ["string", "null"] }
+      }
+    },
+    "delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "record_count", "observed_count", "self_reported_count", "roles", "tiers", "models_requested", "failed_count", "measured_input_tokens", "measured_output_tokens", "measured_cost_usd"],
+      "properties": {
+        "status": { "type": "string", "enum": ["OBSERVED", "SELF_REPORTED", "MIXED", "UNOBSERVED"] },
+        "record_count": { "type": "integer", "minimum": 0 },
+        "observed_count": { "type": "integer", "minimum": 0 },
+        "self_reported_count": { "type": "integer", "minimum": 0 },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "tiers": { "type": "array", "items": { "type": "string" } },
+        "models_requested": { "type": "array", "items": { "type": "string" } },
+        "failed_count": { "type": "integer", "minimum": 0 },
+        "measured_input_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
+        "measured_output_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
+        "measured_cost_usd": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] }
+      }
+    },
     "failure_reasons": {
       "type": "array",
       "items": { "type": "string" }

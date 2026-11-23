@@ -26,6 +26,7 @@ const ALL_SUBCOMMANDS = [
   'checkpoint',
   'impact',
   'route',
+  'delegate',
   'verify',
   'feedback',
   'review-package',

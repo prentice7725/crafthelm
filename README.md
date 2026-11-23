@@ -24,7 +24,7 @@ CraftHelm은 **단일 AI 공급자·단일 AI 호스트(Claude Code, Codex, Anti
 
 ## 현재 구현 범위 (M0)
 
-- 12개 JSON Schema 계약 (`contracts/schemas/*.schema.json`)
+- 13개 JSON Schema 계약 (`contracts/schemas/*.schema.json`)
 - Claude / Codex / Antigravity(`agy`·IDE 세션) / Gemini / Generic·커스텀 CLI 단일 공급자 호스트 어댑터 및 `doctor` 환경 탐지
 - 인터뷰·실행 계약·4축 방법론 플래너·단일 writer 락·체크포인트·재개/핸드오프 패킷(`tried_and_failed`)·재계획·3라운드 에스컬레이션
 - Markdown SOT + 재구축 가능한 `node:sqlite` FTS5 장기 메모리(`memory.mjs`: `supersedes` 결정 교체·에피소드 로그 자연 감쇠, LLM 비용 0원)
@@ -33,7 +33,15 @@ CraftHelm은 **단일 AI 공급자·단일 AI 호스트(Claude Code, Codex, Anti
 - 보호된 `policy_base_ref` 기반 실행 검증(`fast`/`unit`/`e2e`/`property`/`differential`), Diff-Triggered Reliability Rules(`observe`/`enforce`), 스냅샷 `STALE` 탐지
 - Kouetsu 1.0.2 감사·Pinning 및 Review Package 교열·링크/AC 교차 검증 게이트
 - 명시적 인간 결정 레코드(`approval.mjs`) 및 코드/보고서 변경 시 승인 효력 무효화 검증
-- E01~E04, E10 결정적 벤치마크 하네스 (미측정 항목은 `"unknown"`으로 기록)
+- 뮤테이션 검사(`verify --mutation-probe`): 변경된 줄을 깨뜨려 통과한 검사가 실패하는지 확인하는 결정적 교차 검증 대체 수단
+- 실측 벤치마크(`benchmark live --i-accept-cost`): 호스트 CLI가 보고한 토큰·비용으로 A/B/C 비교
+- 위임 실행 기록(`delegate run|record`): 어댑터로 워커를 실제 실행해 사용량을 실측하거나 세션 내 워커 결과 패킷을 접수, 기록이 없으면 `UNOBSERVED` 표기
+- 결정적 인터뷰 질문 생성(`interview_questions.md`)과 영역별 검토 여부(`uncertainty_coverage`), 엄격 모드(`--strict-interview`)
+- 증거 강도 등급(`evidence_strength`): 통과한 검사가 이번 변경을 실제로 다루는지 기계적으로 판정해 검토 보고서에 표시
+- 작은 작업용 단축 흐름: `start --init-run`(계약 승인 + 기준선 동결), `feedback`(검증 + 보고서 발행)
+- 경량 프로필(`--profile lite`): 작은 버그 수정에 한한 E2E 조건부 면제, 조건 초과 시 `LITE_PROFILE_EXCEEDED`
+- 승인 게이트: 에이전트 세션·비대화형 실행 차단, 신원 등급 표기, 보호된 승인자 정책(`.crafthelm/approvers.json`) 기반 ed25519 서명 승인
+- E01~E04, E10 결정적 벤치마크 하네스와 실측 A/B/C 하네스 (미측정 항목은 `"unknown"`으로 기록)
 
 ## 빠른 시작 (작은 버그 수정 예제)
 
@@ -67,6 +75,7 @@ node scripts/crafthelm.mjs verify --repo /path/to/repo --run-id RUN-001 --select
 node scripts/crafthelm.mjs review-package --repo /path/to/repo --run-id RUN-001
 
 # 6) 사람이 보고서를 검토한 뒤 최종 인수 결정 기록
+#    (AI 세션 밖의 대화형 터미널에서 직접 실행. 보고서 SHA-256 끝 8자 입력으로 확인)
 node scripts/crafthelm.mjs approve record \
   --repo /path/to/repo \
   --run-id RUN-001 \
@@ -74,6 +83,31 @@ node scripts/crafthelm.mjs approve record \
   --actor human-reviewer \
   --rationale "원인 수정과 단위·E2E 검증 증빙 확인 완료"
 ```
+
+### 작은 작업용 단축 흐름
+
+`--init-run`은 계약 승인과 실행 기준선 동결을 `start` 한 번에 묶고, `feedback`은 검증과 검토 보고서 발행을 묶습니다. 사람이 하는 일은 계약 승인 확인과 최종 인수 두 번입니다.
+
+```bash
+# 1) 인터뷰 + 계약 생성·승인 + 실행 기준선 동결
+node scripts/crafthelm.mjs start "로그인 토큰 만료 비교 연산 오류 수정" \
+  --repo /path/to/repo --change-kind bugfix \
+  --e2e-cmd "node tests/e2e.test.mjs" \
+  --approve-contract --actor operator --init-run
+
+# --- 범위(scope.allow) 내 코드 수정 ---
+
+# 2) 검증 + 검토 보고서 발행 (READY_FOR_HUMAN_REVIEW)
+node scripts/crafthelm.mjs feedback --repo /path/to/repo --run-id CH-T001-RUN-001 --selective
+
+# 3) 사람이 AI 세션 밖의 터미널에서 최종 인수 결정 기록
+node scripts/crafthelm.mjs approve record --repo /path/to/repo --run-id CH-T001-RUN-001 \
+  --decision ACCEPTED --actor human-reviewer --rationale "검증 증빙 확인 완료"
+```
+
+작은 버그 수정이고 E2E 명령을 마련하기 어렵다면 `--profile lite`를 붙이고 `--e2e-cmd`를 뺍니다. 변경이 소스 3개 파일·60줄 이내이고 변경 코드에 닿는 전용 테스트가 있을 때만 E2E 요구가 면제되며, 조건을 벗어나면 `verify`가 `LITE_PROFILE_EXCEEDED`로 실패합니다.
+
+계약을 먼저 검토하고 싶으면 `--approve-contract`를 빼고 실행한 뒤 안내되는 `contract approve <계약> --actor <이름> --init-run` 명령을 씁니다.
 
 ## 주요 명령
 

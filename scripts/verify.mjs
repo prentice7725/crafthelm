@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { summarizeDelegations } from './delegate.mjs';
+import { assessEvidenceStrength } from './lib/evidence-strength.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
+import { evaluateLiteProfile } from './lib/lite-profile.mjs';
 import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
 import { runShellCommand } from './lib/exec.mjs';
 import {
@@ -25,6 +28,7 @@ import { analyzeImpact } from './lib/impact-analysis.mjs';
 import { collectTriedAndFailed } from './lib/handoff.mjs';
 import { hasMemorySources, searchMemory } from './lib/memory.mjs';
 import { classifyTaskTier } from './lib/model-router.mjs';
+import { runMutationProbe } from './lib/mutation-probe.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
 import { extractCommandTargets } from './lib/test-runners.mjs';
@@ -300,6 +304,7 @@ function classifyFailureCauseCategory(failureReasons) {
   if (joined.includes('SCOPE_VIOLATION')) return 'SCOPE_VIOLATION';
   if (joined.includes('PROTECTED_PATH_VIOLATION')) return 'PROTECTED_PATH_VIOLATION';
   if (joined.includes('E2E_FAILED') || joined.includes('E2E_MISSING')) return 'E2E_FAILURE';
+  if (joined.includes('LITE_PROFILE_EXCEEDED')) return 'LITE_PROFILE_EXCEEDED';
   if (joined.includes('RELIABILITY_ENFORCE_FAILED')) return 'RELIABILITY_RULE_FAILURE';
   if (joined.includes('REVIEW_STALE')) return 'STALE_REVIEW';
   return 'TEST_FAILURE';
@@ -617,9 +622,25 @@ export function runVerify(options) {
     (contract.change_kind === 'feature' || contract.change_kind === 'bugfix' || !contract.change_kind) &&
     contract.verification_policy?.require_e2e_for_functional !== false;
 
+  // Lite profile: the E2E requirement is waived only while the real diff stays small and well-tested.
+  const liteProfile = evaluateLiteProfile({
+    contract,
+    strength: assessEvidenceStrength({ contract, checks, impact, changedFiles }),
+    diffText,
+  });
+  let e2eExempted = false;
+
   if (isFunctional) {
     const e2eChecks = checks.filter((c) => c.kind === 'e2e' && c.status !== 'NOT_APPLICABLE');
-    if (e2eChecks.length === 0) {
+    if (e2eChecks.length === 0 && liteProfile.profile === 'lite' && liteProfile.eligible) {
+      e2eExempted = true;
+      unverified.push('E2E smoke not executed (waived by lite profile)');
+    } else if (e2eChecks.length === 0 && liteProfile.profile === 'lite') {
+      failureReasons.push(
+        `LITE_PROFILE_EXCEEDED: ${liteProfile.violations.join('; ')}. Add an e2e acceptance check or re-plan the task with the full profile.`,
+      );
+      unverified.push('E2E smoke missing: change no longer qualifies for the lite profile');
+    } else if (e2eChecks.length === 0) {
       failureReasons.push('E2E_MISSING: Functional feature/bugfix requires at least one executed e2e check');
       unverified.push('E2E smoke missing for functional change');
     } else if (e2eChecks.some((c) => c.status !== 'PASS')) {
@@ -867,6 +888,37 @@ export function runVerify(options) {
   const executedCount = checks.filter((c) => !['NOT_APPLICABLE', 'UNVERIFIED', 'SKIPPED_UNIMPACTED'].includes(c.status)).length;
   const skippedCount = checks.filter((c) => c.status === 'SKIPPED_UNIMPACTED').length;
 
+  // Optional mutation probe: break changed lines one at a time and expect a passing check to fail.
+  const probeRequested = Boolean(options.mutationProbe) || contract.verification_policy?.mutation_probe === true;
+  let mutationProbe = null;
+  let mutationProbeRel = null;
+  if (probeRequested) {
+    if (technicalStatus !== 'VERIFIED' && technicalStatus !== 'PARTIAL') {
+      mutationProbe = { status: 'SKIPPED', reason: `technical_status is ${technicalStatus}`, total: 0, killed: 0, survived: 0, score: null, mutants: [] };
+    } else {
+      const probeKinds = new Set(['fast', 'unit', 'test', 'e2e', 'property']);
+      const acById = new Map(contract.acceptance.map((ac) => [ac.id, ac]));
+      if (options.progress) process.stderr.write('[verify] Running mutation probe on changed lines\n');
+      mutationProbe = runMutationProbe({
+        repoRoot,
+        journalDir: path.join(runDir, 'evidence'),
+        diffText,
+        sourceFiles: assessEvidenceStrength({ contract, checks, impact, changedFiles }).changed_source_files,
+        commands: checks
+          .filter((c) => c.status === 'PASS' && c.command && probeKinds.has(c.kind))
+          .map((c) => ({ id: c.id, command: c.command, expected_exit_code: acById.get(c.id)?.expected_exit_code ?? 0 })),
+        maxMutants: options.maxMutants ?? contract.verification_policy?.mutation_probe_max_mutants,
+      });
+      if (options.progress) {
+        process.stderr.write(`[verify] Mutation probe -> ${mutationProbe.status} (killed ${mutationProbe.killed}/${mutationProbe.total})\n`);
+      }
+    }
+    mutationProbeRel = 'evidence/mutation-probe.json';
+    writeJson(path.join(runDir, mutationProbeRel), mutationProbe);
+  }
+
+  const evidenceStrength = assessEvidenceStrength({ contract, checks, impact, changedFiles, mutationProbe });
+
   const manifest = {
     schema_version: '0.3',
     run_id: runId,
@@ -889,6 +941,25 @@ export function runVerify(options) {
       policy_tamper_detected: policy.tamperDetected,
     },
     technical_status: technicalStatus,
+    evidence_strength: evidenceStrength,
+    delegation: summarizeDelegations(repoRoot, runId),
+    process_profile: {
+      profile: liteProfile.profile,
+      e2e_exempted: e2eExempted,
+      violations: liteProfile.violations,
+      limits: liteProfile.limits,
+      observed: liteProfile.observed,
+    },
+    mutation_probe: mutationProbe
+      ? {
+          status: mutationProbe.status,
+          total: mutationProbe.total,
+          killed: mutationProbe.killed,
+          survived: mutationProbe.survived,
+          score: mutationProbe.score,
+          evidence_file: mutationProbeRel,
+        }
+      : { status: 'NOT_REQUESTED', total: 0, killed: 0, survived: 0, score: null, evidence_file: null },
     failure_reasons: failureReasons,
     impact_analysis_file: impactRel,
     feedback_packet_file: feedbackPacketRel,
@@ -933,6 +1004,10 @@ export function runVerify(options) {
     policy_source: policy.policySource,
     policy_digest: policy.policyDigest,
     scope_status: scopeStatus,
+    evidence_strength: evidenceStrength.level,
+    evidence_strength_signals: evidenceStrength.signals.map((s) => s.code),
+    mutation_probe: manifest.mutation_probe,
+    process_profile: manifest.process_profile,
     failure_reasons: failureReasons,
     impact_analysis_file: impactRel,
     feedback_packet_file: feedbackPacketRel,
@@ -987,6 +1062,8 @@ if (isMainModule(import.meta.url)) {
         reviewFile: args['review-file'],
         policyDir: args['policy-dir'],
         selective: Boolean(args.selective),
+        mutationProbe: Boolean(args['mutation-probe']),
+        maxMutants: args['max-mutants'] ? Number(args['max-mutants']) : undefined,
         progress: !args.quiet,
       });
     }

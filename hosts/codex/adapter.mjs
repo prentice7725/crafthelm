@@ -164,6 +164,7 @@ export function dispatch(taskSpec, options = {}) {
 
   const res = runCommand('codex', args, {
     cwd: taskSpec.cwd,
+    timeoutMs: options.timeoutMs,
     env: options.env,
     runner: options.runner,
     resolve: options.resolve,

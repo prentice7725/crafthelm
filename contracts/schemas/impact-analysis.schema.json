@@ -84,6 +84,9 @@
     "recommended_test_command": { "type": ["string", "null"] },
     "fallback_to_full": { "type": "boolean" },
     "fallback_reason": { "type": ["string", "null"] },
+    "fallback_code": {
+      "enum": ["GLOBAL_CONFIG_CHANGED", "UNPARSED_SOURCE_CHANGED", "NO_TEST_MATCHED", "ANALYSIS_UNAVAILABLE", null]
+    },
     "graph_stats": {
       "type": "object",
       "additionalProperties": false,

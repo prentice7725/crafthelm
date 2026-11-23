@@ -191,6 +191,7 @@ export function createGenericAdapter(hostId = 'generic', hostConfig = {}) {
 
     const res = runCommand(caps.cli_command, args, {
       cwd: taskSpec.cwd,
+      timeoutMs: options.timeoutMs,
       env: options.env,
       runner: options.runner,
       resolve: options.resolve,
