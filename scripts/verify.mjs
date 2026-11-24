@@ -628,12 +628,42 @@ export function runVerify(options) {
     (contract.change_kind === 'feature' || contract.change_kind === 'bugfix' || !contract.change_kind) &&
     contract.verification_policy?.require_e2e_for_functional !== false;
 
+  // Optional mutation probe: break changed lines one at a time and expect a passing check to fail.
+  // It runs before the lite decision so that surviving mutants count against the exemption.
+  const probeRequested = Boolean(options.mutationProbe) || contract.verification_policy?.mutation_probe === true;
+  let mutationProbe = null;
+  let mutationProbeRel = null;
+  if (probeRequested) {
+    if (hasBlocked || failureReasons.length > 0) {
+      const reason = hasBlocked ? 'an acceptance check is BLOCKED' : `verification already failed (${failureReasons[0].split(':')[0]})`;
+      mutationProbe = { status: 'SKIPPED', reason, total: 0, killed: 0, survived: 0, score: null, mutants: [] };
+    } else {
+      const probeKinds = new Set(['fast', 'unit', 'test', 'e2e', 'property']);
+      const acById = new Map(contract.acceptance.map((ac) => [ac.id, ac]));
+      if (options.progress) process.stderr.write('[verify] Running mutation probe on changed lines\n');
+      mutationProbe = runMutationProbe({
+        repoRoot,
+        journalDir: path.join(runDir, 'evidence'),
+        diffText,
+        sourceFiles: assessEvidenceStrength({ contract, checks, impact, changedFiles }).changed_source_files,
+        commands: checks
+          .filter((c) => c.status === 'PASS' && c.command && probeKinds.has(c.kind))
+          .map((c) => ({ id: c.id, command: c.command, expected_exit_code: acById.get(c.id)?.expected_exit_code ?? 0 })),
+        maxMutants: options.maxMutants ?? contract.verification_policy?.mutation_probe_max_mutants,
+      });
+      if (options.progress) {
+        process.stderr.write(`[verify] Mutation probe -> ${mutationProbe.status} (killed ${mutationProbe.killed}/${mutationProbe.total})\n`);
+      }
+    }
+    mutationProbeRel = 'evidence/mutation-probe.json';
+    writeJson(path.join(runDir, mutationProbeRel), mutationProbe);
+  }
+
+  const evidenceStrength = assessEvidenceStrength({ contract, checks, impact, changedFiles, mutationProbe });
+
   // Lite profile: the E2E requirement is waived only while the real diff stays small and well-tested.
-  const liteProfile = evaluateLiteProfile({
-    contract,
-    strength: assessEvidenceStrength({ contract, checks, impact, changedFiles }),
-    diffText,
-  });
+  // The strength already includes the mutation probe, so weak probe results revoke the exemption.
+  const liteProfile = evaluateLiteProfile({ contract, strength: evidenceStrength, diffText });
   let e2eExempted = false;
 
   if (isFunctional) {
@@ -894,36 +924,6 @@ export function runVerify(options) {
   const executedCount = checks.filter((c) => !['NOT_APPLICABLE', 'UNVERIFIED', 'SKIPPED_UNIMPACTED'].includes(c.status)).length;
   const skippedCount = checks.filter((c) => c.status === 'SKIPPED_UNIMPACTED').length;
 
-  // Optional mutation probe: break changed lines one at a time and expect a passing check to fail.
-  const probeRequested = Boolean(options.mutationProbe) || contract.verification_policy?.mutation_probe === true;
-  let mutationProbe = null;
-  let mutationProbeRel = null;
-  if (probeRequested) {
-    if (technicalStatus !== 'VERIFIED' && technicalStatus !== 'PARTIAL') {
-      mutationProbe = { status: 'SKIPPED', reason: `technical_status is ${technicalStatus}`, total: 0, killed: 0, survived: 0, score: null, mutants: [] };
-    } else {
-      const probeKinds = new Set(['fast', 'unit', 'test', 'e2e', 'property']);
-      const acById = new Map(contract.acceptance.map((ac) => [ac.id, ac]));
-      if (options.progress) process.stderr.write('[verify] Running mutation probe on changed lines\n');
-      mutationProbe = runMutationProbe({
-        repoRoot,
-        journalDir: path.join(runDir, 'evidence'),
-        diffText,
-        sourceFiles: assessEvidenceStrength({ contract, checks, impact, changedFiles }).changed_source_files,
-        commands: checks
-          .filter((c) => c.status === 'PASS' && c.command && probeKinds.has(c.kind))
-          .map((c) => ({ id: c.id, command: c.command, expected_exit_code: acById.get(c.id)?.expected_exit_code ?? 0 })),
-        maxMutants: options.maxMutants ?? contract.verification_policy?.mutation_probe_max_mutants,
-      });
-      if (options.progress) {
-        process.stderr.write(`[verify] Mutation probe -> ${mutationProbe.status} (killed ${mutationProbe.killed}/${mutationProbe.total})\n`);
-      }
-    }
-    mutationProbeRel = 'evidence/mutation-probe.json';
-    writeJson(path.join(runDir, mutationProbeRel), mutationProbe);
-  }
-
-  const evidenceStrength = assessEvidenceStrength({ contract, checks, impact, changedFiles, mutationProbe });
 
   const manifest = {
     schema_version: '0.3',

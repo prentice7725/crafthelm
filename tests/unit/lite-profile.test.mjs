@@ -14,9 +14,10 @@ import { runVerify } from '../../scripts/verify.mjs';
 
 const FIXED = 'export function inRange(x, lo, hi) {\n  return x >= lo && x <= hi;\n}\n';
 const REACHING_TEST = "import assert from 'node:assert/strict'; import { inRange } from '../src/range.mjs'; assert.equal(inRange(1, 1, 3), true);\n";
+const BOUNDARY_TEST = "import assert from 'node:assert/strict'; import { inRange } from '../src/range.mjs'; assert.equal(inRange(1, 1, 3), true); assert.equal(inRange(3, 1, 3), true);\n";
 const UNRELATED_TEST = "import assert from 'node:assert/strict'; import { other } from '../src/other.mjs'; assert.equal(other, 1);\n";
 
-function makeRepo({ withReachingTest = true } = {}) {
+function makeRepo({ withReachingTest = true, reachingTest = REACHING_TEST } = {}) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-lite-'));
   runGit(repo, ['init', '-b', 'main']);
   runGit(repo, ['config', 'user.name', 'CraftHelm Test']);
@@ -25,7 +26,7 @@ function makeRepo({ withReachingTest = true } = {}) {
     'README.md': '# Lite Demo\n',
     'src/range.mjs': 'export function inRange(x, lo, hi) {\n  return x > lo && x < hi;\n}\n',
     'src/other.mjs': 'export const other = 1;\n',
-    ...(withReachingTest ? { 'tests/range.test.mjs': REACHING_TEST } : {}),
+    ...(withReachingTest ? { 'tests/range.test.mjs': reachingTest } : {}),
     'tests/other.test.mjs': UNRELATED_TEST,
   };
   for (const [rel, content] of Object.entries(files)) {
@@ -119,6 +120,39 @@ describe('Lite Profile: conditional E2E exemption for small bugfixes', () => {
       const v = runVerify({ repo, runId });
       assert.equal(v.ok, false);
       assert.ok(v.failure_reasons.some((r) => /LITE_PROFILE_EXCEEDED: .*evidence strength is weak \(NO_TEST_REACHES_CHANGE\)/.test(r)), v.failure_reasons.join(' | '));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('revokes the exemption when the mutation probe shows the tailored test does not pin the change', () => {
+    // The test reaches the changed line but never checks the upper bound, so `<=` -> `<` survives.
+    const repo = makeRepo();
+    try {
+      const { runId } = startRun(repo, 'LITE-MUT-WEAK', { verification_policy: { mutation_probe: true } });
+      const v = runVerify({ repo, runId });
+      assert.equal(v.mutation_probe.status, 'PROBED');
+      assert.equal(v.mutation_probe.survived, 1);
+      assert.equal(v.ok, false);
+      assert.equal(v.technical_status, 'FAILED');
+      assert.equal(v.process_profile.e2e_exempted, false);
+      assert.equal(v.process_profile.observed.evidence_strength, 'weak');
+      assert.ok(v.failure_reasons.some((r) => /LITE_PROFILE_EXCEEDED: .*evidence strength is weak \(.*MUTANTS_SURVIVED.*\)/.test(r)), v.failure_reasons.join(' | '));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the exemption when every mutant is killed', () => {
+    const repo = makeRepo({ reachingTest: BOUNDARY_TEST });
+    try {
+      const { runId } = startRun(repo, 'LITE-MUT-STRONG', { verification_policy: { mutation_probe: true } });
+      const v = runVerify({ repo, runId });
+      assert.deepEqual([v.mutation_probe.status, v.mutation_probe.killed, v.mutation_probe.survived], ['PROBED', 1, 0]);
+      assert.equal(v.ok, true);
+      assert.equal(v.technical_status, 'PARTIAL');
+      assert.equal(v.process_profile.e2e_exempted, true);
+      assert.equal(fs.readFileSync(path.join(repo, 'src/range.mjs'), 'utf8'), FIXED);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
