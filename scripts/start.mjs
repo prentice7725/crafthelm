@@ -400,7 +400,7 @@ if (isMainModule(import.meta.url)) {
       docsDir: args['docs-dir'],
       overwrite: Boolean(args.overwrite),
       approveContract: Boolean(args['approve-contract']),
-      approvalChannel: classifyApprovalChannel(),
+      approvalChannel: args['approve-contract'] ? classifyApprovalChannel() : undefined,
       actor: args.actor,
       initRun: Boolean(args['init-run']),
       strictInterview: Boolean(args['strict-interview']),

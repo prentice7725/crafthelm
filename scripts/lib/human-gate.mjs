@@ -1,5 +1,7 @@
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline/promises';
 import { canonicalJson, sha256Buffer } from './crypto.mjs';
 import { isGitRepo, readFileAtRef } from './git.mjs';
@@ -51,14 +53,141 @@ export function detectAgentSession(env = process.env) {
   return { detected: signals.length > 0, signals };
 }
 
+const MAX_ANCESTRY_DEPTH = 64;
+
+// Desktop chat apps share the "Claude" name with the Claude Code CLI. A human typing in the
+// desktop app's own terminal panel runs under the app, not under an agent CLI, so it is not a signal.
+const DESKTOP_APP_PATH = /[\\/]WindowsApps[\\/]Claude_|[\\/]AnthropicClaude[\\/]|Claude\.app[\\/]Contents[\\/]MacOS[\\/]Claude$/i;
+
+function executableOf(commandLine, name) {
+  const line = String(commandLine ?? '').trim();
+  if (!line) return String(name ?? '');
+  if (line.startsWith('"')) {
+    const end = line.indexOf('"', 1);
+    return end > 0 ? line.slice(1, end) : line.slice(1);
+  }
+  return line.split(/\s+/)[0];
+}
+
+/**
+ * Name the agent CLI a process belongs to, or null. Matches the agent host binaries and their
+ * npm packages, not every program that shares a vendor name.
+ * @param {{ name?: string, commandLine?: string }} proc
+ * @returns {string|null}
+ */
+export function classifyAgentProcess(proc) {
+  const exe = executableOf(proc.commandLine, proc.name);
+  const base = path.basename(exe.replace(/\\/g, '/')).toLowerCase().replace(/\.exe$/, '');
+  const line = String(proc.commandLine ?? '');
+  if (/@anthropic-ai[\\/]claude-code/i.test(line)) return 'claude-code';
+  if (base === 'claude' && !DESKTOP_APP_PATH.test(exe)) return 'claude-code';
+  if (base === 'codex' || /@openai[\\/]codex/i.test(line)) return 'codex';
+  if (base === 'gemini' || /@google[\\/]gemini-cli/i.test(line)) return 'gemini-cli';
+  return null;
+}
+
+function readWindowsProcesses() {
+  const res = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CommandLine | ' +
+        'Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress',
+    ],
+    { encoding: 'utf8', windowsHide: true, timeout: 20_000, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (res.error || res.status !== 0) throw new Error(res.error?.message ?? `powershell exited ${res.status}`);
+  const rows = JSON.parse(res.stdout);
+  const table = new Map();
+  for (const r of Array.isArray(rows) ? rows : [rows]) {
+    table.set(Number(r.ProcessId), { ppid: Number(r.ParentProcessId), name: r.Name ?? '', commandLine: r.CommandLine ?? '' });
+  }
+  return (pid) => table.get(pid) ?? null;
+}
+
+function readLinuxProcess(pid) {
+  let stat;
+  try {
+    stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+  } catch {
+    return null;
+  }
+  const close = stat.lastIndexOf(')');
+  const name = stat.slice(stat.indexOf('(') + 1, close);
+  const ppid = Number(stat.slice(close + 2).split(' ')[1]);
+  let commandLine = '';
+  try {
+    commandLine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' ');
+  } catch {
+    // Kernel threads and exited processes have no readable cmdline.
+  }
+  return { ppid, name, commandLine };
+}
+
+function readPsProcesses() {
+  const res = spawnSync('ps', ['-A', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 20_000, maxBuffer: 64 * 1024 * 1024 });
+  if (res.error || res.status !== 0) throw new Error(res.error?.message ?? `ps exited ${res.status}`);
+  const table = new Map();
+  for (const raw of res.stdout.split('\n')) {
+    const m = raw.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
+    if (!m) continue;
+    table.set(Number(m[1]), { ppid: Number(m[2]), name: path.basename(executableOf(m[3], '')), commandLine: m[3] });
+  }
+  return (pid) => table.get(pid) ?? null;
+}
+
+function defaultProcessLookup(platform = process.platform) {
+  if (platform === 'win32') return readWindowsProcesses();
+  if (platform === 'linux' && fs.existsSync('/proc/self/stat')) return readLinuxProcess;
+  return readPsProcesses();
+}
+
+/**
+ * Walk the parent-process chain looking for an agent CLI. Clearing the agent's environment
+ * variables or wrapping the command in a pseudo-terminal does not change who the ancestors are.
+ * A process that detaches itself from the agent's tree (a daemon, a scheduled task) escapes this check.
+ * @param {{ pid?: number, lookup?: (pid: number) => ({ ppid: number, name?: string, commandLine?: string }|null), platform?: string }} [options]
+ * @returns {{ checked: boolean, detected: boolean, ancestor: { pid: number, name: string, agent: string }|null, error?: string }}
+ */
+export function detectAgentAncestry(options = {}) {
+  let lookup = options.lookup;
+  try {
+    lookup ??= defaultProcessLookup(options.platform);
+  } catch (err) {
+    return { checked: false, detected: false, ancestor: null, error: err.message };
+  }
+  const seen = new Set();
+  let pid = options.pid ?? process.pid;
+  try {
+    for (let depth = 0; depth < MAX_ANCESTRY_DEPTH && pid > 0 && !seen.has(pid); depth++) {
+      seen.add(pid);
+      const proc = lookup(pid);
+      if (!proc) break;
+      const agent = classifyAgentProcess(proc);
+      if (agent) return { checked: true, detected: true, ancestor: { pid, name: proc.name ?? '', agent } };
+      pid = proc.ppid;
+    }
+  } catch (err) {
+    return { checked: false, detected: false, ancestor: null, error: err.message };
+  }
+  return { checked: true, detected: false, ancestor: null };
+}
+
+function describeAncestor(ancestry) {
+  return `${ancestry.ancestor.agent} process ${ancestry.ancestor.name} (pid ${ancestry.ancestor.pid})`;
+}
+
 /**
  * Classify how a CLI approval was issued, for honest recording on lower-stakes approvals
  * (contract approval, stage gates) that an agent may be allowed to run after a permission prompt.
- * @param {{ env?: NodeJS.ProcessEnv, stdin?: { isTTY?: boolean }, stdout?: { isTTY?: boolean } }} [options]
+ * @param {{ env?: NodeJS.ProcessEnv, stdin?: { isTTY?: boolean }, stdout?: { isTTY?: boolean }, ancestry?: ReturnType<typeof detectAgentAncestry> }} [options]
  * @returns {'agent_session'|'interactive_terminal'|'non_interactive'}
  */
 export function classifyApprovalChannel(options = {}) {
   if (detectAgentSession(options.env ?? process.env).detected) return 'agent_session';
+  if ((options.ancestry ?? detectAgentAncestry()).detected) return 'agent_session';
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
   return stdin.isTTY && stdout.isTTY ? 'interactive_terminal' : 'non_interactive';
@@ -67,7 +196,7 @@ export function classifyApprovalChannel(options = {}) {
 /**
  * Throw unless the caller looks like a human at an interactive terminal.
  * A signed decision may skip the TTY requirement, never the agent-session check.
- * @param {{ env?: NodeJS.ProcessEnv, stdin?: { isTTY?: boolean }, stdout?: { isTTY?: boolean }, allowNonTty?: boolean, action?: string }} [options]
+ * @param {{ env?: NodeJS.ProcessEnv, stdin?: { isTTY?: boolean }, stdout?: { isTTY?: boolean }, allowNonTty?: boolean, action?: string, ancestry?: ReturnType<typeof detectAgentAncestry> }} [options]
  */
 export function assertHumanInteractive(options = {}) {
   const action = options.action ?? 'This command';
@@ -76,6 +205,13 @@ export function assertHumanInteractive(options = {}) {
     throw new Error(
       `HUMAN_GATE_AGENT_SESSION: ${action} must be run by a human outside an AI agent session ` +
         `(detected: ${agent.signals.join(', ')}). Run it yourself in a separate terminal.`,
+    );
+  }
+  const ancestry = options.ancestry ?? detectAgentAncestry();
+  if (ancestry.detected) {
+    throw new Error(
+      `HUMAN_GATE_AGENT_SESSION: ${action} must be run by a human outside an AI agent session ` +
+        `(detected: ${describeAncestor(ancestry)} among the parent processes). Run it yourself in a separate terminal.`,
     );
   }
   const stdin = options.stdin ?? process.stdin;

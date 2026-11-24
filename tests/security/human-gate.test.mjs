@@ -12,7 +12,9 @@ import {
   AGENT_SESSION_ENV_VARS,
   APPROVERS_POLICY_PATH,
   assertHumanInteractive,
+  classifyAgentProcess,
   classifyApprovalChannel,
+  detectAgentAncestry,
   detectAgentSession,
   generateApproverKeyPair,
   loadApproversPolicy,
@@ -24,6 +26,12 @@ import { runVerify } from '../../scripts/verify.mjs';
 const APPROVAL_CLI = path.join(CRAFTHELM_ROOT, 'scripts', 'approval.mjs');
 const TTY = { isTTY: true };
 const NO_TTY = { isTTY: false };
+const NO_AGENT_ANCESTOR = { checked: true, detected: false, ancestor: null };
+
+function fakeProcessTree(rows) {
+  const table = new Map(rows.map(([pid, ppid, name, commandLine]) => [pid, { ppid, name, commandLine }]));
+  return (pid) => table.get(pid) ?? null;
+}
 
 function envWithoutAgentSignals(extra = {}) {
   const env = { ...process.env };
@@ -92,21 +100,62 @@ describe('Human Gate: agent-session block, TTY confirmation tier, signed approva
     assert.equal(detectAgentSession({ CRAFTHELM_AGENT_SESSION: '0' }).detected, false);
 
     assert.throws(
-      () => assertHumanInteractive({ env: { GEMINI_CLI: '1' }, stdin: TTY, stdout: TTY }),
+      () => assertHumanInteractive({ env: { GEMINI_CLI: '1' }, stdin: TTY, stdout: TTY, ancestry: NO_AGENT_ANCESTOR }),
       /HUMAN_GATE_AGENT_SESSION/,
     );
-    assert.throws(() => assertHumanInteractive({ env: {}, stdin: NO_TTY, stdout: TTY }), /HUMAN_GATE_NO_TTY/);
-    assert.doesNotThrow(() => assertHumanInteractive({ env: {}, stdin: TTY, stdout: TTY }));
-    assert.doesNotThrow(() => assertHumanInteractive({ env: {}, stdin: NO_TTY, stdout: NO_TTY, allowNonTty: true }));
+    assert.throws(() => assertHumanInteractive({ env: {}, stdin: NO_TTY, stdout: TTY, ancestry: NO_AGENT_ANCESTOR }), /HUMAN_GATE_NO_TTY/);
+    assert.doesNotThrow(() => assertHumanInteractive({ env: {}, stdin: TTY, stdout: TTY, ancestry: NO_AGENT_ANCESTOR }));
+    assert.doesNotThrow(() => assertHumanInteractive({ env: {}, stdin: NO_TTY, stdout: NO_TTY, allowNonTty: true, ancestry: NO_AGENT_ANCESTOR }));
     // A signature never excuses an agent session.
     assert.throws(
-      () => assertHumanInteractive({ env: { CLAUDECODE: '1' }, stdin: NO_TTY, stdout: NO_TTY, allowNonTty: true }),
+      () => assertHumanInteractive({ env: { CLAUDECODE: '1' }, stdin: NO_TTY, stdout: NO_TTY, allowNonTty: true, ancestry: NO_AGENT_ANCESTOR }),
       /HUMAN_GATE_AGENT_SESSION/,
     );
 
-    assert.equal(classifyApprovalChannel({ env: { AI_AGENT: 'x' }, stdin: TTY, stdout: TTY }), 'agent_session');
-    assert.equal(classifyApprovalChannel({ env: {}, stdin: TTY, stdout: TTY }), 'interactive_terminal');
-    assert.equal(classifyApprovalChannel({ env: {}, stdin: NO_TTY, stdout: TTY }), 'non_interactive');
+    assert.equal(classifyApprovalChannel({ env: { AI_AGENT: 'x' }, stdin: TTY, stdout: TTY, ancestry: NO_AGENT_ANCESTOR }), 'agent_session');
+    assert.equal(classifyApprovalChannel({ env: {}, stdin: TTY, stdout: TTY, ancestry: NO_AGENT_ANCESTOR }), 'interactive_terminal');
+    assert.equal(classifyApprovalChannel({ env: {}, stdin: NO_TTY, stdout: TTY, ancestry: NO_AGENT_ANCESTOR }), 'non_interactive');
+  });
+
+  it('finds an agent CLI among parent processes even after its environment variables are cleared', () => {
+    // Agent CLIs by binary or npm package; the Claude desktop app and ordinary shells are not agents.
+    assert.equal(classifyAgentProcess({ name: 'claude.exe', commandLine: '"C:/Users/u/AppData/Roaming/Claude/claude-code/2.1.0/claude.exe" --output-format stream-json' }), 'claude-code');
+    assert.equal(classifyAgentProcess({ name: 'node', commandLine: 'node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js' }), 'claude-code');
+    assert.equal(classifyAgentProcess({ name: 'claude', commandLine: '/home/u/.local/bin/claude' }), 'claude-code');
+    assert.equal(classifyAgentProcess({ name: 'codex', commandLine: 'codex exec' }), 'codex');
+    assert.equal(classifyAgentProcess({ name: 'node', commandLine: 'node /opt/lib/node_modules/@google/gemini-cli/dist/index.js' }), 'gemini-cli');
+    assert.equal(classifyAgentProcess({ name: 'Claude.exe', commandLine: '"C:/Program Files/WindowsApps/Claude_6.0.0_x64__abc/app/Claude.exe"' }), null);
+    assert.equal(classifyAgentProcess({ name: 'Claude', commandLine: '/Applications/Claude.app/Contents/MacOS/Claude' }), null);
+    assert.equal(classifyAgentProcess({ name: 'bash', commandLine: '/bin/bash /home/u/claude-notes/run.sh' }), null);
+
+    // node approval.mjs <- script (pseudo-terminal) <- bash <- claude: the wrapper does not hide the agent.
+    const underAgent = fakeProcessTree([
+      [40, 30, 'node', 'node scripts/approval.mjs record'],
+      [30, 20, 'script', 'script -q /dev/null node scripts/approval.mjs record'],
+      [20, 10, 'bash', 'bash -c ...'],
+      [10, 1, 'claude', '/home/u/.local/bin/claude'],
+      [1, 0, 'systemd', '/sbin/init'],
+    ]);
+    const found = detectAgentAncestry({ pid: 40, lookup: underAgent });
+    assert.deepEqual(found, { checked: true, detected: true, ancestor: { pid: 10, name: 'claude', agent: 'claude-code' } });
+    assert.throws(
+      () => assertHumanInteractive({ env: {}, stdin: TTY, stdout: TTY, ancestry: found }),
+      /HUMAN_GATE_AGENT_SESSION: .*claude-code process claude \(pid 10\)/,
+    );
+    assert.equal(classifyApprovalChannel({ env: {}, stdin: TTY, stdout: TTY, ancestry: found }), 'agent_session');
+
+    // A human terminal inside the desktop app, and a cyclic or broken chain, report no agent.
+    const human = fakeProcessTree([
+      [40, 30, 'node', 'node scripts/approval.mjs record'],
+      [30, 20, 'pwsh.exe', 'pwsh.exe'],
+      [20, 0, 'Claude.exe', '"C:/Program Files/WindowsApps/Claude_6.0.0_x64__abc/app/Claude.exe"'],
+    ]);
+    assert.equal(detectAgentAncestry({ pid: 40, lookup: human }).detected, false);
+    assert.equal(detectAgentAncestry({ pid: 1, lookup: fakeProcessTree([[1, 2, 'a', 'a'], [2, 1, 'b', 'b']]) }).detected, false);
+
+    // If the process table cannot be read the check is reported as not run, not as a pass.
+    const unreadable = detectAgentAncestry({ pid: 40, lookup: () => { throw new Error('access denied'); } });
+    assert.deepEqual(unreadable, { checked: false, detected: false, ancestor: null, error: 'access denied' });
   });
 
   it('refuses `approval.mjs record` from an agent session or a non-interactive shell and writes nothing', () => {
@@ -131,7 +180,9 @@ describe('Human Gate: agent-session block, TTY confirmation tier, signed approva
         windowsHide: true,
       });
       assert.equal(piped.status, 1);
-      assert.match(piped.stderr, /HUMAN_GATE_NO_TTY/);
+      // Under an agent CLI the cleared environment does not help: the parent chain still shows the agent.
+      const expected = detectAgentAncestry().detected ? /HUMAN_GATE_AGENT_SESSION: .*among the parent processes/ : /HUMAN_GATE_NO_TTY/;
+      assert.match(piped.stderr, expected);
 
       assert.equal(fs.existsSync(getApprovalDecisionPath(repo, 'GATE-CLI-RUN')), false);
       const checkpoint = JSON.parse(fs.readFileSync(getCheckpointPath(repo, 'GATE-CLI-RUN'), 'utf8'));

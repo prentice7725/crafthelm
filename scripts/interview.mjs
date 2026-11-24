@@ -487,7 +487,7 @@ if (isMainModule(import.meta.url)) {
     ...(typeof args.profile === 'string' ? { processProfile: args.profile } : {}),
     ...(args['strict-interview'] ? { strictInterview: true } : {}),
     approveContract: Boolean(args['approve-contract']),
-    approvalChannel: classifyApprovalChannel(),
+    approvalChannel: args['approve-contract'] ? classifyApprovalChannel() : undefined,
     actor: args.actor,
   });
   for (const w of res.warnings ?? []) {
