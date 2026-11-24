@@ -72,6 +72,9 @@ function computeBaselineCraftHelmFiles(repoRoot, docsDir = 'docs', taskId = null
     '.crafthelm/config.json',
     '.crafthelm/skills.lock.json',
     'GEMINI.md',
+    // init-host --host claude merges the approval guards here. Its state at baseline is the starting
+    // point; an edit after the baseline still shows up as a changed file.
+    '.claude/settings.json',
   ];
   for (const skillBase of ['.agents/skills', '.claude/skills', '.codex/skills', '.gemini/skills']) {
     const absBase = path.join(repoRoot, skillBase);

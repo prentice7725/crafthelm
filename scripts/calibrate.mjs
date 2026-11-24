@@ -83,7 +83,8 @@ export function calibrateLiteLimits(options) {
       const key = `${repo}::${r.run_id}::${r.target_snapshot_digest}::${r.e2e}::${r.other_checks}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      bugfix.push({ ...r, repo: path.basename(repo) });
+      // The full resolved path identifies the repository; two checkouts can share a folder name and run IDs.
+      bugfix.push({ ...r, repo });
     }
   }
 

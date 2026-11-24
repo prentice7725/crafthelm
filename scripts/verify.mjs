@@ -29,7 +29,7 @@ import { analyzeImpact } from './lib/impact-analysis.mjs';
 import { collectTriedAndFailed } from './lib/handoff.mjs';
 import { hasMemorySources, searchMemory } from './lib/memory.mjs';
 import { classifyTaskTier } from './lib/model-router.mjs';
-import { runMutationProbe } from './lib/mutation-probe.mjs';
+import { recoverInterruptedProbe, runMutationProbe } from './lib/mutation-probe.mjs';
 import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-observations.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
@@ -415,6 +415,12 @@ export function runVerify(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const runDir = getRunDir(repoRoot, runId);
+  // A probe killed mid-mutation leaves a mutated source and a journal. Restore it before anything
+  // reads the tree: the snapshot, the checks and the probe itself must all see the original bytes.
+  const recovered = recoverInterruptedProbe(repoRoot, path.join(runDir, 'evidence'));
+  if (recovered.recovered) {
+    process.stderr.write(`[verify] Restored ${recovered.file} from an interrupted mutation probe\n`);
+  }
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
   const contractPath = options.contract ? path.resolve(options.contract) : getContractPath(repoRoot, checkpoint.task_id);

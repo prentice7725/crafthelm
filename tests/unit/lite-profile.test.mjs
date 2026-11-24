@@ -110,6 +110,47 @@ describe('Lite Profile: conditional E2E exemption for small bugfixes', () => {
     }
   });
 
+  it('restores a source left mutated by an interrupted probe before verifying', () => {
+    const repo = makeRepo({ reachingTest: BOUNDARY_TEST });
+    try {
+      const { runId } = startRun(repo, 'LITE-RECOVER', { verification_policy: { mutation_probe: true } });
+      // State after a probe was killed mid-mutation: the journal holds the original, the file is mutated.
+      const evidenceDir = path.join(getRunDir(repo, runId), 'evidence');
+      fs.mkdirSync(evidenceDir, { recursive: true });
+      fs.writeFileSync(path.join(evidenceDir, 'mutation-journal.json'), JSON.stringify({ file: 'src/range.mjs', original_base64: Buffer.from(FIXED).toString('base64') }));
+      fs.writeFileSync(path.join(repo, 'src/range.mjs'), FIXED.replace('<=', '<'), 'utf8');
+
+      const v = runVerify({ repo, runId });
+      assert.equal(fs.readFileSync(path.join(repo, 'src/range.mjs'), 'utf8'), FIXED);
+      assert.equal(fs.existsSync(path.join(evidenceDir, 'mutation-journal.json')), false);
+      // The checks ran on the restored source, so the boundary test passes.
+      assert.equal(v.technical_status, 'PARTIAL', v.failure_reasons.join(' | '));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a new source file the same before and after `git add`', () => {
+    const repo = makeRepo();
+    try {
+      const { runId } = startRun(repo, 'LITE-NEWFILE');
+      // 75 lines in a file git does not track yet: over the default 60-line limit either way.
+      const body = Array.from({ length: 75 }, (_, i) => `export const v${i} = ${i} > 1;`).join('\n');
+      fs.writeFileSync(path.join(repo, 'src/extra.mjs'), `${body}\n`, 'utf8');
+      const sizes = [];
+      for (const stage of ['untracked', 'staged']) {
+        if (stage === 'staged') runGit(repo, ['add', 'src/extra.mjs']);
+        const v = runVerify({ repo, runId });
+        assert.equal(v.process_profile.e2e_exempted, false, stage);
+        sizes.push(v.process_profile.observed.added_lines);
+      }
+      // 75 new lines plus the one-line fix in src/range.mjs.
+      assert.deepEqual(sizes, [76, 76]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it('fails when no tailored test reaches the change (weak evidence cannot buy the exemption)', () => {
     // The repo has no test that imports the changed module.
     const repo = makeRepo({ withReachingTest: false });
