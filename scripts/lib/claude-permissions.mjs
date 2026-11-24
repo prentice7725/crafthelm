@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CRAFTHELM_ROOT } from './paths.mjs';
+import { writeAtomic } from './task-artifacts.mjs';
 
 /**
  * Claude Code permission guards for the human approval gate.
@@ -43,7 +44,13 @@ export function resolveClaudeSettingsPath(options = {}) {
 
 function readSettings(settingsPath) {
   if (!fs.existsSync(settingsPath)) return { exists: false, data: null, error: null };
-  const raw = fs.readFileSync(settingsPath, 'utf8');
+  let raw;
+  try {
+    raw = fs.readFileSync(settingsPath, 'utf8');
+  } catch (err) {
+    // A permission error or a directory in the file's place is reported, never thrown at doctor or start.
+    return { exists: true, data: null, error: `unreadable: ${err.code ?? err.message}` };
+  }
   if (!raw.trim()) return { exists: true, data: {}, error: null };
   try {
     const data = JSON.parse(raw);
@@ -118,6 +125,7 @@ export function applyClaudePermissionGuards(options) {
     permissions: { ...permissions, ask: [...ask, ...added.ask], deny: [...deny, ...added.deny] },
   };
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(settingsPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  // Temp file plus rename: an interrupted install must not leave the user's settings file truncated.
+  writeAtomic(settingsPath, `${JSON.stringify(next, null, 2)}\n`);
   return { settings_path: settingsPath, action: 'ADDED', added };
 }

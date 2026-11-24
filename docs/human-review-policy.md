@@ -13,7 +13,7 @@
 
 1. AI 에이전트 세션에서 실행되면 `HUMAN_GATE_AGENT_SESSION`으로 거부한다. 두 가지로 판별한다.
    - 호스트가 심는 환경 변수(`CLAUDECODE`, `AI_AGENT`, `GEMINI_CLI`, `CODEX_SANDBOX` 등)와 `CRAFTHELM_AGENT_SESSION`.
-   - 부모 프로세스 체인. 위로 올라가며 에이전트 CLI(`claude` 실행 파일이나 `@anthropic-ai/claude-code`, `codex`나 `@openai/codex`, `gemini`나 `@google/gemini-cli`)가 있는지 본다. Claude 데스크톱 앱 자체는 에이전트로 보지 않으므로, 사람이 앱의 터미널 패널에서 직접 실행하면 통과한다. 프로세스 목록을 읽지 못하면 이 검사는 건너뛴다. Windows에서는 PowerShell로 목록을 읽어 1~2초가 걸린다.
+   - 부모 프로세스 체인. 위로 올라가며 에이전트 CLI(`claude` 실행 파일이나 `@anthropic-ai/claude-code`, `codex`나 `@openai/codex`, `gemini`나 `@google/gemini-cli`)가 있는지 본다. 프로세스 이름, 명령줄의 첫 인자, 그리고 `node` 같은 인터프리터 뒤의 스크립트 경로를 함께 보므로, npm 설치본(`node /usr/local/bin/claude`)과 공백이 든 Windows 경로도 잡는다. Claude 데스크톱 앱 자체는 에이전트로 보지 않으므로, 사람이 앱의 터미널 패널에서 직접 실행하면 통과한다. Windows와 Linux에서는 프로세스 생성 시각을 비교해, 재사용된 PID가 가리키는 나중에 생긴 프로세스를 부모로 오인하지 않는다. 프로세스 목록을 읽지 못하면 이 검사는 건너뛴다. Windows에서는 PowerShell로 목록을 읽어 1~2초가 걸린다.
 2. 대화형 터미널이 아니면 `HUMAN_GATE_NO_TTY`로 거부한다. `--sign-key`로 서명하는 경우에만 이 조건을 면제한다.
 3. 서명이 없으면 검토 보고서 SHA-256의 마지막 8자를 직접 입력해야 기록한다.
 

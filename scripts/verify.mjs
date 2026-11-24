@@ -4,7 +4,7 @@ import path from 'node:path';
 import { summarizeDelegations } from './delegate.mjs';
 import { assessEvidenceStrength } from './lib/evidence-strength.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
-import { evaluateLiteProfile } from './lib/lite-profile.mjs';
+import { evaluateLiteProfile, isLiteContract } from './lib/lite-profile.mjs';
 import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
 import { runShellCommand } from './lib/exec.mjs';
 import {
@@ -629,62 +629,6 @@ export function runVerify(options) {
     (contract.change_kind === 'feature' || contract.change_kind === 'bugfix' || !contract.change_kind) &&
     contract.verification_policy?.require_e2e_for_functional !== false;
 
-  // Optional mutation probe: break changed lines one at a time and expect a passing check to fail.
-  // It runs before the lite decision so that surviving mutants count against the exemption.
-  const probeRequested = Boolean(options.mutationProbe) || contract.verification_policy?.mutation_probe === true;
-  let mutationProbe = null;
-  let mutationProbeRel = null;
-  if (probeRequested) {
-    if (hasBlocked || failureReasons.length > 0) {
-      const reason = hasBlocked ? 'an acceptance check is BLOCKED' : `verification already failed (${failureReasons[0].split(':')[0]})`;
-      mutationProbe = { status: 'SKIPPED', reason, total: 0, killed: 0, survived: 0, score: null, mutants: [] };
-    } else {
-      const probeKinds = new Set(['fast', 'unit', 'test', 'e2e', 'property']);
-      const acById = new Map(contract.acceptance.map((ac) => [ac.id, ac]));
-      if (options.progress) process.stderr.write('[verify] Running mutation probe on changed lines\n');
-      mutationProbe = runMutationProbe({
-        repoRoot,
-        journalDir: path.join(runDir, 'evidence'),
-        diffText,
-        sourceFiles: assessEvidenceStrength({ contract, checks, impact, changedFiles }).changed_source_files,
-        commands: checks
-          .filter((c) => c.status === 'PASS' && c.command && probeKinds.has(c.kind))
-          .map((c) => ({ id: c.id, command: c.command, expected_exit_code: acById.get(c.id)?.expected_exit_code ?? 0 })),
-        maxMutants: options.maxMutants ?? contract.verification_policy?.mutation_probe_max_mutants,
-      });
-      if (options.progress) {
-        process.stderr.write(`[verify] Mutation probe -> ${mutationProbe.status} (killed ${mutationProbe.killed}/${mutationProbe.total})\n`);
-      }
-    }
-    mutationProbeRel = 'evidence/mutation-probe.json';
-    writeJson(path.join(runDir, mutationProbeRel), mutationProbe);
-  }
-
-  const evidenceStrength = assessEvidenceStrength({ contract, checks, impact, changedFiles, mutationProbe });
-
-  // Lite profile: the E2E requirement is waived only while the real diff stays small and well-tested.
-  // The strength already includes the mutation probe, so weak probe results revoke the exemption.
-  const liteProfile = evaluateLiteProfile({ contract, strength: evidenceStrength, diffText });
-  let e2eExempted = false;
-
-  if (isFunctional) {
-    const e2eChecks = checks.filter((c) => c.kind === 'e2e' && c.status !== 'NOT_APPLICABLE');
-    if (e2eChecks.length === 0 && liteProfile.profile === 'lite' && liteProfile.eligible) {
-      e2eExempted = true;
-      unverified.push('E2E smoke not executed (waived by lite profile)');
-    } else if (e2eChecks.length === 0 && liteProfile.profile === 'lite') {
-      failureReasons.push(
-        `LITE_PROFILE_EXCEEDED: ${liteProfile.violations.join('; ')}. Add an e2e acceptance check or re-plan the task with the full profile.`,
-      );
-      unverified.push('E2E smoke missing: change no longer qualifies for the lite profile');
-    } else if (e2eChecks.length === 0) {
-      failureReasons.push('E2E_MISSING: Functional feature/bugfix requires at least one executed e2e check');
-      unverified.push('E2E smoke missing for functional change');
-    } else if (e2eChecks.some((c) => c.status !== 'PASS')) {
-      failureReasons.push('E2E_FAILED: E2E execution failed; unit tests alone cannot grant technical pass');
-    }
-  }
-
   // V05 / V08: Diff-Triggered Reliability Rules
   const changedSymbols = extractChangedSymbols(diffText);
   const reliabilityChecks = [];
@@ -780,6 +724,68 @@ export function runVerify(options) {
     }
   } else if (options.requireReview) {
     unverified.push('AI independent review not recorded');
+  }
+
+  // Every failure that does not depend on the probe is settled above. The E2E outcome depends on it only
+  // when a lite contract has no E2E check; otherwise a failing or missing E2E fails the run regardless.
+  const e2eChecks = checks.filter((c) => c.kind === 'e2e' && c.status !== 'NOT_APPLICABLE');
+  const e2eFailureKnown = isFunctional && (e2eChecks.length > 0 ? e2eChecks.some((c) => c.status !== 'PASS') : !isLiteContract(contract));
+
+  // Optional mutation probe: break changed lines one at a time and expect a passing check to fail.
+  // It runs before the lite decision so that surviving mutants count against the exemption.
+  const probeRequested = Boolean(options.mutationProbe) || contract.verification_policy?.mutation_probe === true;
+  let mutationProbe = null;
+  let mutationProbeRel = null;
+  if (probeRequested) {
+    if (hasBlocked || failureReasons.length > 0 || e2eFailureKnown) {
+      const reason = hasBlocked
+        ? 'an acceptance check is BLOCKED'
+        : `verification already failed (${failureReasons[0]?.split(':')[0] ?? (e2eChecks.length > 0 ? 'E2E_FAILED' : 'E2E_MISSING')})`;
+      mutationProbe = { status: 'SKIPPED', reason, total: 0, killed: 0, survived: 0, score: null, mutants: [] };
+    } else {
+      const probeKinds = new Set(['fast', 'unit', 'test', 'e2e', 'property']);
+      const acById = new Map(contract.acceptance.map((ac) => [ac.id, ac]));
+      if (options.progress) process.stderr.write('[verify] Running mutation probe on changed lines\n');
+      mutationProbe = runMutationProbe({
+        repoRoot,
+        journalDir: path.join(runDir, 'evidence'),
+        diffText,
+        sourceFiles: assessEvidenceStrength({ contract, checks, impact, changedFiles }).changed_source_files,
+        commands: checks
+          .filter((c) => c.status === 'PASS' && c.command && probeKinds.has(c.kind))
+          .map((c) => ({ id: c.id, command: c.command, expected_exit_code: acById.get(c.id)?.expected_exit_code ?? 0 })),
+        maxMutants: options.maxMutants ?? contract.verification_policy?.mutation_probe_max_mutants,
+      });
+      if (options.progress) {
+        process.stderr.write(`[verify] Mutation probe -> ${mutationProbe.status} (killed ${mutationProbe.killed}/${mutationProbe.total})\n`);
+      }
+    }
+    mutationProbeRel = 'evidence/mutation-probe.json';
+    writeJson(path.join(runDir, mutationProbeRel), mutationProbe);
+  }
+
+  const evidenceStrength = assessEvidenceStrength({ contract, checks, impact, changedFiles, mutationProbe });
+
+  // Lite profile: the E2E requirement is waived only while the real diff stays small and well-tested.
+  // The strength already includes the mutation probe, so weak probe results revoke the exemption.
+  const liteProfile = evaluateLiteProfile({ contract, strength: evidenceStrength, diffText });
+  let e2eExempted = false;
+
+  if (isFunctional) {
+    if (e2eChecks.length === 0 && liteProfile.profile === 'lite' && liteProfile.eligible) {
+      e2eExempted = true;
+      unverified.push('E2E smoke not executed (waived by lite profile)');
+    } else if (e2eChecks.length === 0 && liteProfile.profile === 'lite') {
+      failureReasons.push(
+        `LITE_PROFILE_EXCEEDED: ${liteProfile.violations.join('; ')}. Add an e2e acceptance check or re-plan the task with the full profile.`,
+      );
+      unverified.push('E2E smoke missing: change no longer qualifies for the lite profile');
+    } else if (e2eChecks.length === 0) {
+      failureReasons.push('E2E_MISSING: Functional feature/bugfix requires at least one executed e2e check');
+      unverified.push('E2E smoke missing for functional change');
+    } else if (e2eChecks.some((c) => c.status !== 'PASS')) {
+      failureReasons.push('E2E_FAILED: E2E execution failed; unit tests alone cannot grant technical pass');
+    }
   }
 
   const anyCheckBlocked = hasBlocked;

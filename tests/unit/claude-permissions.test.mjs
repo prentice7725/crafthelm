@@ -63,6 +63,17 @@ describe('Claude permission guards reach the real settings files', () => {
       const skipped = applyClaudePermissionGuards({ settingsPath: broken });
       assert.equal(skipped.action, 'SKIPPED_INVALID');
       assert.equal(fs.readFileSync(broken, 'utf8'), '{ "permissions": { // comment\n } }');
+
+      // The write goes through a temp file and rename, leaving no stray temp files behind.
+      assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+
+      // An unreadable settings path (here a directory) is reported, not thrown.
+      const home = path.join(dir, 'home');
+      fs.mkdirSync(path.join(home, '.claude', 'settings.json'), { recursive: true });
+      const inspected = inspectClaudePermissionGuards({ homeDir: home });
+      assert.equal(inspected.status, 'MISSING');
+      assert.match(inspected.files[0].error, /^unreadable: /);
+      assert.equal(applyClaudePermissionGuards({ settingsPath: path.join(home, '.claude', 'settings.json') }).action, 'SKIPPED_INVALID');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

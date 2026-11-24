@@ -45,6 +45,7 @@ describe('Lite limit calibration from recorded verification rounds', () => {
 
       const supported = calibrateLiteLimits({ repos: [repo], minSamples: 5 });
       assert.equal(supported.informative_rounds, 5);
+      assert.equal(supported.current.informative_runs, 5);
       assert.equal(supported.bugfix_runs, 8);
       assert.equal(supported.current.e2e_catches, 0);
       assert.equal(supported.current.miss_rate_upper_95, 0.6);
@@ -70,6 +71,28 @@ describe('Lite limit calibration from recorded verification rounds', () => {
         [caught.suggested_limits.max_changed_source_files, caught.suggested_limits.max_added_lines],
         [1, 300],
       );
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a run once, at the round where a lite run would have stopped', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-calib-unit-'));
+    try {
+      // One task re-verified on 20 different snapshots: 20 informative rounds, but one lite decision.
+      writeObservations(repo, 'MANY', Array.from({ length: 20 }, (_, i) => round(i)));
+      const report = calibrateLiteLimits({ repos: [repo] });
+      assert.equal(report.informative_rounds, 20);
+      assert.equal(report.current.informative_runs, 1);
+      assert.equal(report.verdict, 'INSUFFICIENT_DATA');
+
+      // The first qualifying round decides: E2E passed there, so a later E2E failure is not a lite miss.
+      writeObservations(repo, 'LATER', [round(30), round(31, { e2e: 'FAIL' })]);
+      assert.equal(calibrateLiteLimits({ repos: [repo], minSamples: 1 }).current.e2e_catches, 0);
+
+      for (const bad of [0, -1, 1.5, 'abc']) {
+        assert.throws(() => calibrateLiteLimits({ repos: [repo], minSamples: bad }), /--min-samples must be an integer of at least 1/);
+      }
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

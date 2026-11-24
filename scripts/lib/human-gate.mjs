@@ -57,16 +57,31 @@ const MAX_ANCESTRY_DEPTH = 64;
 
 // Desktop chat apps share the "Claude" name with the Claude Code CLI. A human typing in the
 // desktop app's own terminal panel runs under the app, not under an agent CLI, so it is not a signal.
-const DESKTOP_APP_PATH = /[\\/]WindowsApps[\\/]Claude_|[\\/]AnthropicClaude[\\/]|Claude\.app[\\/]Contents[\\/]MacOS[\\/]Claude$/i;
+const DESKTOP_APP_PATH = /[\\/]WindowsApps[\\/]Claude_|[\\/]AnthropicClaude[\\/]|Claude\.app[\\/]Contents[\\/]MacOS[\\/]Claude(?:\s|"|$)/i;
+// npm-installed CLIs run as `node <bin>`; the script after the interpreter names the agent.
+const INTERPRETERS = new Set(['node', 'nodejs', 'bun', 'deno']);
 
-function executableOf(commandLine, name) {
-  const line = String(commandLine ?? '').trim();
-  if (!line) return String(name ?? '');
-  if (line.startsWith('"')) {
-    const end = line.indexOf('"', 1);
-    return end > 0 ? line.slice(1, end) : line.slice(1);
+function argvTokens(commandLine) {
+  return [...String(commandLine ?? '').matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+}
+
+function baseName(file) {
+  return path.basename(String(file ?? '').replace(/\\/g, '/')).toLowerCase().replace(/\.(exe|cmd|js|mjs|cjs)$/, '');
+}
+
+/**
+ * Basenames that may name the program: the process name, the first argv token, and for an interpreter
+ * the first non-flag argument after it. An unquoted Windows path with a space splits the first token,
+ * so the process name (`claude.exe`) is checked as well.
+ */
+function programNames(proc) {
+  const tokens = argvTokens(proc.commandLine);
+  const names = [baseName(proc.name), baseName(tokens[0])];
+  if (INTERPRETERS.has(baseName(tokens[0]))) {
+    const script = tokens.slice(1).find((t) => !t.startsWith('-'));
+    if (script) names.push(baseName(script));
   }
-  return line.split(/\s+/)[0];
+  return new Set(names.filter(Boolean));
 }
 
 /**
@@ -76,13 +91,12 @@ function executableOf(commandLine, name) {
  * @returns {string|null}
  */
 export function classifyAgentProcess(proc) {
-  const exe = executableOf(proc.commandLine, proc.name);
-  const base = path.basename(exe.replace(/\\/g, '/')).toLowerCase().replace(/\.exe$/, '');
+  const names = programNames(proc);
   const line = String(proc.commandLine ?? '');
   if (/@anthropic-ai[\\/]claude-code/i.test(line)) return 'claude-code';
-  if (base === 'claude' && !DESKTOP_APP_PATH.test(exe)) return 'claude-code';
-  if (base === 'codex' || /@openai[\\/]codex/i.test(line)) return 'codex';
-  if (base === 'gemini' || /@google[\\/]gemini-cli/i.test(line)) return 'gemini-cli';
+  if (names.has('claude') && !DESKTOP_APP_PATH.test(line || String(proc.name ?? ''))) return 'claude-code';
+  if (names.has('codex') || /@openai[\\/]codex/i.test(line)) return 'codex';
+  if (names.has('gemini') || /@google[\\/]gemini-cli/i.test(line)) return 'gemini-cli';
   return null;
 }
 
@@ -93,8 +107,9 @@ function readWindowsProcesses() {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CommandLine | ' +
-        'Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress',
+      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CommandLine,CreationDate | ' +
+        "Select-Object ProcessId,ParentProcessId,Name,CommandLine,@{n='Started';e={if ($_.CreationDate) { [int64]($_.CreationDate.ToFileTimeUtc() / 10000) }}} | " +
+        'ConvertTo-Json -Compress',
     ],
     { encoding: 'utf8', windowsHide: true, timeout: 20_000, maxBuffer: 64 * 1024 * 1024 },
   );
@@ -102,7 +117,12 @@ function readWindowsProcesses() {
   const rows = JSON.parse(res.stdout);
   const table = new Map();
   for (const r of Array.isArray(rows) ? rows : [rows]) {
-    table.set(Number(r.ProcessId), { ppid: Number(r.ParentProcessId), name: r.Name ?? '', commandLine: r.CommandLine ?? '' });
+    table.set(Number(r.ProcessId), {
+      ppid: Number(r.ParentProcessId),
+      name: r.Name ?? '',
+      commandLine: r.CommandLine ?? '',
+      started: typeof r.Started === 'number' ? r.Started : null,
+    });
   }
   return (pid) => table.get(pid) ?? null;
 }
@@ -116,14 +136,15 @@ function readLinuxProcess(pid) {
   }
   const close = stat.lastIndexOf(')');
   const name = stat.slice(stat.indexOf('(') + 1, close);
-  const ppid = Number(stat.slice(close + 2).split(' ')[1]);
+  const fields = stat.slice(close + 2).split(' ');
   let commandLine = '';
   try {
-    commandLine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' ');
+    commandLine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean).map((t) => (/\s/.test(t) ? `"${t}"` : t)).join(' ');
   } catch {
     // Kernel threads and exited processes have no readable cmdline.
   }
-  return { ppid, name, commandLine };
+  // fields[1] is ppid, fields[19] is starttime in clock ticks since boot.
+  return { ppid: Number(fields[1]), name, commandLine, started: Number(fields[19]) };
 }
 
 function readPsProcesses() {
@@ -133,7 +154,7 @@ function readPsProcesses() {
   for (const raw of res.stdout.split('\n')) {
     const m = raw.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
     if (!m) continue;
-    table.set(Number(m[1]), { ppid: Number(m[2]), name: path.basename(executableOf(m[3], '')), commandLine: m[3] });
+    table.set(Number(m[1]), { ppid: Number(m[2]), name: path.basename(argvTokens(m[3])[0] ?? ''), commandLine: m[3], started: null });
   }
   return (pid) => table.get(pid) ?? null;
 }
@@ -148,7 +169,9 @@ function defaultProcessLookup(platform = process.platform) {
  * Walk the parent-process chain looking for an agent CLI. Clearing the agent's environment
  * variables or wrapping the command in a pseudo-terminal does not change who the ancestors are.
  * A process that detaches itself from the agent's tree (a daemon, a scheduled task) escapes this check.
- * @param {{ pid?: number, lookup?: (pid: number) => ({ ppid: number, name?: string, commandLine?: string }|null), platform?: string }} [options]
+ * Windows keeps a parent PID after the parent exits and reuses PIDs, so a "parent" created after its
+ * child is a different process and ends the walk.
+ * @param {{ pid?: number, lookup?: (pid: number) => ({ ppid: number, name?: string, commandLine?: string, started?: number|null }|null), platform?: string }} [options]
  * @returns {{ checked: boolean, detected: boolean, ancestor: { pid: number, name: string, agent: string }|null, error?: string }}
  */
 export function detectAgentAncestry(options = {}) {
@@ -160,13 +183,16 @@ export function detectAgentAncestry(options = {}) {
   }
   const seen = new Set();
   let pid = options.pid ?? process.pid;
+  let child = null;
   try {
     for (let depth = 0; depth < MAX_ANCESTRY_DEPTH && pid > 0 && !seen.has(pid); depth++) {
       seen.add(pid);
       const proc = lookup(pid);
       if (!proc) break;
+      if (Number.isFinite(child?.started) && Number.isFinite(proc.started) && proc.started > child.started) break;
       const agent = classifyAgentProcess(proc);
       if (agent) return { checked: true, detected: true, ancestor: { pid, name: proc.name ?? '', agent } };
+      child = proc;
       pid = proc.ppid;
     }
   } catch (err) {

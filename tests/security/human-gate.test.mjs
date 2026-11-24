@@ -127,6 +127,12 @@ describe('Human Gate: agent-session block, TTY confirmation tier, signed approva
     assert.equal(classifyAgentProcess({ name: 'Claude.exe', commandLine: '"C:/Program Files/WindowsApps/Claude_6.0.0_x64__abc/app/Claude.exe"' }), null);
     assert.equal(classifyAgentProcess({ name: 'Claude', commandLine: '/Applications/Claude.app/Contents/MacOS/Claude' }), null);
     assert.equal(classifyAgentProcess({ name: 'bash', commandLine: '/bin/bash /home/u/claude-notes/run.sh' }), null);
+    // npm installs run as `node <bin symlink>`; an unquoted path with a space splits argv[0].
+    assert.equal(classifyAgentProcess({ name: 'node', commandLine: 'node /usr/local/bin/claude --print' }), 'claude-code');
+    assert.equal(classifyAgentProcess({ name: 'node', commandLine: 'node --no-warnings /usr/local/bin/codex exec' }), 'codex');
+    assert.equal(classifyAgentProcess({ name: 'claude.exe', commandLine: 'C:/Users/John Smith/AppData/Roaming/Claude/claude-code/2.1.0/claude.exe -p' }), 'claude-code');
+    assert.equal(classifyAgentProcess({ name: 'Claude', commandLine: '/Applications/Claude.app/Contents/MacOS/Claude --type=renderer' }), null);
+    assert.equal(classifyAgentProcess({ name: 'node', commandLine: 'node scripts/approval.mjs record' }), null);
 
     // node approval.mjs <- script (pseudo-terminal) <- bash <- claude: the wrapper does not hide the agent.
     const underAgent = fakeProcessTree([
@@ -152,6 +158,14 @@ describe('Human Gate: agent-session block, TTY confirmation tier, signed approva
     ]);
     assert.equal(detectAgentAncestry({ pid: 40, lookup: human }).detected, false);
     assert.equal(detectAgentAncestry({ pid: 1, lookup: fakeProcessTree([[1, 2, 'a', 'a'], [2, 1, 'b', 'b']]) }).detected, false);
+
+    // Windows reuses PIDs: a recorded parent PID that now belongs to a newer process is not the parent.
+    const reused = (pid) => ({
+      40: { ppid: 30, name: 'node', commandLine: 'node scripts/approval.mjs record', started: 1000 },
+      30: { ppid: 20, name: 'pwsh.exe', commandLine: 'pwsh.exe', started: 900 },
+      20: { ppid: 1, name: 'claude.exe', commandLine: 'C:/Users/u/.local/bin/claude.exe', started: 5000 },
+    })[pid] ?? null;
+    assert.equal(detectAgentAncestry({ pid: 40, lookup: reused }).detected, false);
 
     // If the process table cannot be read the check is reported as not run, not as a pass.
     const unreadable = detectAgentAncestry({ pid: 40, lookup: () => { throw new Error('access denied'); } });

@@ -8,7 +8,7 @@ import { approveContractFile, checkContractReadiness } from '../../scripts/contr
 import { runInterview } from '../../scripts/interview.mjs';
 import { runGit } from '../../scripts/lib/git.mjs';
 import { evaluateLiteProfile } from '../../scripts/lib/lite-profile.mjs';
-import { getReviewPackagePath } from '../../scripts/lib/paths.mjs';
+import { getReviewPackagePath, getRunDir } from '../../scripts/lib/paths.mjs';
 import { publishReviewPackage } from '../../scripts/review-package.mjs';
 import { runVerify } from '../../scripts/verify.mjs';
 
@@ -153,6 +153,28 @@ describe('Lite Profile: conditional E2E exemption for small bugfixes', () => {
       assert.equal(v.technical_status, 'PARTIAL');
       assert.equal(v.process_profile.e2e_exempted, true);
       assert.equal(fs.readFileSync(path.join(repo, 'src/range.mjs'), 'utf8'), FIXED);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the mutation probe when the run fails for a reason the probe cannot change', () => {
+    const repo = makeRepo({ reachingTest: BOUNDARY_TEST });
+    const probeOf = (runId) => JSON.parse(fs.readFileSync(path.join(getRunDir(repo, runId), 'evidence', 'mutation-probe.json'), 'utf8'));
+    try {
+      // Full profile without any E2E check: E2E_MISSING is settled before the probe would run.
+      const missing = startRun(repo, 'MUT-E2E-MISSING', { process_profile: undefined, verification_policy: { mutation_probe: true } });
+      const v1 = runVerify({ repo, runId: missing.runId });
+      assert.equal(v1.technical_status, 'FAILED');
+      assert.deepEqual([probeOf(missing.runId).status, probeOf(missing.runId).reason], ['SKIPPED', 'verification already failed (E2E_MISSING)']);
+
+      // A lite run with unresolved review findings fails whatever the probe finds.
+      const reviewed = startRun(repo, 'MUT-REVIEW', { verification_policy: { mutation_probe: true } });
+      fs.mkdirSync(path.join(getRunDir(repo, reviewed.runId), 'evidence'), { recursive: true });
+      fs.writeFileSync(path.join(getRunDir(repo, reviewed.runId), 'evidence', 'review.json'), JSON.stringify({ status: 'FINDINGS' }), 'utf8');
+      const v2 = runVerify({ repo, runId: reviewed.runId });
+      assert.equal(v2.technical_status, 'FAILED');
+      assert.deepEqual([probeOf(reviewed.runId).status, probeOf(reviewed.runId).reason], ['SKIPPED', 'verification already failed (REVIEW_FINDINGS)']);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

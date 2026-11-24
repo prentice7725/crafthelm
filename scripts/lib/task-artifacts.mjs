@@ -58,6 +58,17 @@ export function writeTaskReceipt(repo, taskId, receipt) {
   writeAtomic(path.join(receiptDir(repo), `${taskId}.json`), `${JSON.stringify(receipt, null, 2)}\n`);
 }
 
+// Receipts live under .crafthelm/runs/, which the agent being verified can write, so a receipt is
+// only believed for paths an interview could have produced: the peer's own contract, which must
+// exist with a matching task_id, and the five interview documents in a docs directory under docs/.
+function isPlausiblePeer(repo, taskId, receipt) {
+  const docsDir = toPosixPath(path.normalize(receipt.docs_dir));
+  if (docsDir !== 'docs' && !docsDir.startsWith('docs/')) return false;
+  if (docsDir.split('/').includes('..')) return false;
+  const contract = readOptionalJson(getContractPath(repo, taskId));
+  return contract?.task_id === taskId;
+}
+
 // Only hashes recorded for the producing task's contract and five interview documents
 // are eligible. Never import scope, source, or arbitrary paths from a sibling run.
 export function peerArtifactHashes(repo, currentTask) {
@@ -71,7 +82,7 @@ export function peerArtifactHashes(repo, currentTask) {
     const taskId = file.slice(0, -5);
     if (taskId === currentTask) continue;
     const receipt = readTaskReceipt(repo, taskId);
-    if (!receipt) continue;
+    if (!receipt || !isPlausiblePeer(repo, taskId, receipt)) continue;
     contractsWithReceipts.add(taskId);
     hashes.set(`.crafthelm/contracts/${file}`, receipt.contract);
     for (const name of INTERVIEW_DOCS) {

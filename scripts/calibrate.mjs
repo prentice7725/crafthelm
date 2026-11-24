@@ -12,7 +12,11 @@ import { readProfileObservations } from './lib/profile-observations.mjs';
  * lite run of the same size would have shipped: a *catch*. Rounds where E2E was waived or never ran say
  * nothing about misses and only count toward coverage (how often a limit would apply).
  *
- * With zero catches in n rounds, the 95% upper bound on the miss rate is about 3/n (rule of three).
+ * The sample unit is the run, not the round. A lite run stops at its first round whose other checks pass,
+ * so per run and per candidate limit the one round that counts is the first informative round within that
+ * limit. Re-verifying the same task many times adds rounds but no independent lite decisions.
+ *
+ * With zero catches in n runs, the 95% upper bound on the miss rate is about 3/n (rule of three).
  * That bound, not "zero misses", is what the report states.
  */
 
@@ -29,14 +33,19 @@ function within(r, limits) {
   return r.changed_source_files <= limits.max_changed_source_files && r.added_lines <= limits.max_added_lines;
 }
 
-function evaluateCandidate(limits, informative, latestPerRun, minSamples) {
-  const inRange = informative.filter((r) => within(r, limits));
-  const catches = inRange.filter((r) => r.e2e === 'FAIL');
-  const n = inRange.length;
+function evaluateCandidate(limits, roundsByRun, latestPerRun, minSamples) {
+  // One sample per run: the first informative round inside the limit is where lite would have stopped.
+  const samples = [];
+  for (const rounds of roundsByRun.values()) {
+    const first = rounds.find((r) => isInformative(r) && within(r, limits));
+    if (first) samples.push(first);
+  }
+  const catches = samples.filter((r) => r.e2e === 'FAIL');
+  const n = samples.length;
   const covered = latestPerRun.filter((r) => within(r, limits)).length;
   return {
     ...limits,
-    informative_rounds: n,
+    informative_runs: n,
     e2e_catches: catches.length,
     observed_miss_rate: n > 0 ? catches.length / n : null,
     // Rule of three: with 0 catches in n trials the 95% upper bound is ~3/n.
@@ -47,11 +56,19 @@ function evaluateCandidate(limits, informative, latestPerRun, minSamples) {
   };
 }
 
+function parseMinSamples(value) {
+  const n = Number(value ?? DEFAULT_MIN_SAMPLES);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`--min-samples must be an integer of at least 1, got "${value}".`);
+  }
+  return n;
+}
+
 /**
  * @param {{ repos: string[], minSamples?: number }} options
  */
 export function calibrateLiteLimits(options) {
-  const minSamples = Number(options.minSamples ?? DEFAULT_MIN_SAMPLES);
+  const minSamples = parseMinSamples(options.minSamples);
   const repos = (options.repos?.length ? options.repos : ['.']).map((r) => path.resolve(r));
   let malformed = 0;
   const seen = new Set();
@@ -70,18 +87,22 @@ export function calibrateLiteLimits(options) {
     }
   }
 
-  const latest = new Map();
-  for (const r of bugfix) latest.set(`${r.repo}::${r.run_id}`, r);
-  const latestPerRun = [...latest.values()];
+  const roundsByRun = new Map();
+  for (const r of bugfix) {
+    const key = `${r.repo}::${r.run_id}`;
+    if (!roundsByRun.has(key)) roundsByRun.set(key, []);
+    roundsByRun.get(key).push(r);
+  }
+  const latestPerRun = [...roundsByRun.values()].map((rounds) => rounds[rounds.length - 1]);
   const informative = bugfix.filter(isInformative);
 
   const candidates = [];
   for (const files of CANDIDATE_FILES) {
     for (const lines of CANDIDATE_LINES) {
-      candidates.push(evaluateCandidate({ max_changed_source_files: files, max_added_lines: lines }, informative, latestPerRun, minSamples));
+      candidates.push(evaluateCandidate({ max_changed_source_files: files, max_added_lines: lines }, roundsByRun, latestPerRun, minSamples));
     }
   }
-  const current = evaluateCandidate({ ...LITE_DEFAULT_LIMITS }, informative, latestPerRun, minSamples);
+  const current = evaluateCandidate({ ...LITE_DEFAULT_LIMITS }, roundsByRun, latestPerRun, minSamples);
 
   let verdict = 'INSUFFICIENT_DATA';
   if (current.e2e_catches > 0) verdict = 'DEFAULT_TOO_LOOSE';
@@ -110,6 +131,7 @@ export function calibrateLiteLimits(options) {
     candidates,
     notes: [
       'Only bugfix rounds that ran E2E with all other checks passing and non-weak evidence can show a miss.',
+    'Each run counts once: its first such round inside a limit, where a lite run would have stopped.',
       'Lite runs waive E2E and add coverage only; full-profile bugfix runs with an E2E check supply the evidence.',
       'Suggested limits are the widest candidate with enough rounds and no catch; set them in verification_policy, they are not applied automatically.',
     ],
@@ -128,7 +150,7 @@ function printUsage() {
       'Usage: calibrate.mjs lite [--repo <path>]... [--min-samples 20] [--json]',
       '',
       'Reads .crafthelm/runs/*/evidence/profile-observations.jsonl from each repo and reports, per candidate',
-      'lite limit, how many bugfix rounds had E2E fail while every other check passed.',
+      'lite limit, how many bugfix runs had E2E fail at the round where every other check first passed.',
       '',
     ].join('\n'),
   );
@@ -142,14 +164,21 @@ if (isMainModule(import.meta.url)) {
   }
   const args = parseArgs(argv.slice(1), { multiFlags: ['repo'] });
   const repos = Array.isArray(args.repo) ? args.repo : args.repo ? [args.repo] : ['.'];
-  const report = calibrateLiteLimits({ repos, minSamples: args['min-samples'] });
+  let report;
+  try {
+    report = calibrateLiteLimits({ repos, minSamples: args['min-samples'] });
+  } catch (err) {
+    process.stderr.write(`${err.message}
+`);
+    process.exit(1);
+  }
   if (args.json) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
     const c = report.current;
     process.stdout.write(`Lite limit calibration: ${report.verdict}\n`);
-    process.stdout.write(`- Bugfix runs: ${report.bugfix_runs}, rounds: ${report.bugfix_rounds}, informative rounds: ${report.informative_rounds} (need ${report.min_samples} within a limit)\n`);
-    process.stdout.write(`- Default ${c.max_changed_source_files} files / ${c.max_added_lines} lines: ${c.informative_rounds} rounds, ${c.e2e_catches} E2E catches, miss rate upper bound ${pct(c.miss_rate_upper_95)}, coverage ${pct(c.coverage)}\n`);
+    process.stdout.write(`- Bugfix runs: ${report.bugfix_runs}, rounds: ${report.bugfix_rounds}, informative rounds: ${report.informative_rounds} (need ${report.min_samples} runs within a limit)\n`);
+    process.stdout.write(`- Default ${c.max_changed_source_files} files / ${c.max_added_lines} lines: ${c.informative_runs} runs, ${c.e2e_catches} E2E catches, miss rate upper bound ${pct(c.miss_rate_upper_95)}, coverage ${pct(c.coverage)}\n`);
     if (report.suggested_limits) {
       const s = report.suggested_limits;
       process.stdout.write(`- Widest supported: ${s.max_changed_source_files} files / ${s.max_added_lines} lines (miss rate upper bound ${pct(s.miss_rate_upper_95)})\n`);
