@@ -245,8 +245,12 @@ export function observeUsage(rawOutput) {
     status: 'measured',
     input_tokens: typeof u.input_tokens === 'number' ? u.input_tokens : 'unknown',
     output_tokens: typeof u.output_tokens === 'number' ? u.output_tokens : 'unknown',
+    // `input_tokens` excludes cached prompt tokens, which dominate a Claude Code call; report both cache sides.
     cache_tokens: typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 'unknown',
+    cache_creation_tokens: typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : 'unknown',
     cost_usd: typeof rawOutput.total_cost_usd === 'number' ? rawOutput.total_cost_usd : 'unknown',
+    // Models the CLI actually billed, so "host default" runs show what really ran.
+    models_used: rawOutput.modelUsage && typeof rawOutput.modelUsage === 'object' ? Object.keys(rawOutput.modelUsage).sort() : [],
   };
 }
 
