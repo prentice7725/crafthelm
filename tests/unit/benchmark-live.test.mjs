@@ -35,7 +35,14 @@ function makeFakeClaude(calls, { reportUsage = true, breakFile = null } = {}) {
       exitCode: 0,
       stdout: JSON.stringify({
         result: 'Done.',
-        ...(reportUsage ? { usage: { input_tokens: input, output_tokens: output, cache_read_input_tokens: 0 }, total_cost_usd: cost } : {}),
+        // Like the real CLI: input_tokens excludes the cached prompt, and modelUsage names the billed model.
+        ...(reportUsage
+          ? {
+              usage: { input_tokens: input, output_tokens: output, cache_read_input_tokens: 150000, cache_creation_input_tokens: 20000 },
+              total_cost_usd: cost,
+              modelUsage: { [`claude-${model === 'default' ? 'opus' : model}-test`]: {} },
+            }
+          : {}),
       }),
     };
   };
@@ -70,7 +77,11 @@ describe('Live A/B/C Benchmark Harness (exercised with a fake host CLI)', () => 
     assert.ok(report.notes.some((n) => /lower bound/.test(n)));
 
     const md = formatLiveBenchmarkMarkdown(report);
-    assert.match(md, /\| L01 \| A \| opus \| PASS \| 4000 \| 900 \| 0\.21 \|/);
+    assert.match(md, /\| L01 \| A \| opus \| claude-opus-test \| PASS \| 4000 \| 150000 \| 20000 \| 900 \| 0\.2100 \|/);
+    // A "host default" run shows which model the CLI actually billed.
+    assert.match(md, /\| L01 \| C \| host default \| claude-opus-test \| PASS \|/);
+    assert.equal(report.totals.A.cache_read_tokens, 150000 * LIVE_TASKS.length);
+    assert.equal(report.totals.B.cache_creation_tokens, 20000 * LIVE_TASKS.length);
   });
 
   it('reports "unknown" instead of estimating when the host returns no usage, and FAIL when the hidden check fails', async () => {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
+import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { sha256Text } from './lib/crypto.mjs';
 import { CRAFTHELM_ROOT, toPosixPath } from './lib/paths.mjs';
 
@@ -186,6 +187,9 @@ export function resolveSkillTargets(options = {}) {
           ? path.join(homeDir, '.claude', 'skills', 'crafthelm')
           : path.join(repoRoot, '.claude', 'skills', 'crafthelm'),
         kouetsuBundle: 'universal',
+        settingsPath: scope === 'user'
+          ? path.join(homeDir, '.claude', 'settings.json')
+          : path.join(repoRoot, '.claude', 'settings.json'),
       });
     } else if (target === 'codex') {
       entries.push({
@@ -315,7 +319,12 @@ export function installSkills(options = {}) {
   const dryRun = Boolean(options.dryRun);
   const force = Boolean(options.force);
   const withKouetsu = Boolean(options.withKouetsu);
+  const skipClaudePermissions = Boolean(options.skipClaudePermissions);
   const targets = resolveSkillTargets(options);
+  // The skill is only half the install on Claude Code: its approval guards live in settings.json.
+  const guardClaude = (entry) => (entry.settingsPath && !skipClaudePermissions
+    ? { claude_permissions: applyClaudePermissionGuards({ settingsPath: entry.settingsPath, dryRun }) }
+    : {});
   const results = [];
 
   for (const entry of targets) {
@@ -348,6 +357,7 @@ export function installSkills(options = {}) {
         skill_sha256: skillSha256,
         planned_files: [...Object.keys(filesMap).sort(), INSTALL_MANIFEST_NAME],
         ...(withKouetsu ? { planned_kouetsu_dir: path.join(path.dirname(entry.skillDir), 'kouetsu') } : {}),
+        ...guardClaude(entry),
       });
       continue;
     }
@@ -387,6 +397,7 @@ export function installSkills(options = {}) {
       action: exists ? (isManaged ? 'UPDATED' : 'OVERWRITTEN') : 'INSTALLED',
       skill_sha256: skillSha256,
       ...(kouetsuInfo ? { kouetsu: kouetsuInfo } : {}),
+      ...guardClaude(entry),
     });
   }
 
@@ -464,6 +475,14 @@ export function getSkillsInstallStatus(options = {}) {
     });
   }
 
+  // One status per target, in order: report whether that scope's settings.json still lacks guards.
+  targets.forEach((entry, i) => {
+    if (entry.settingsPath) {
+      const check = applyClaudePermissionGuards({ settingsPath: entry.settingsPath, dryRun: true });
+      statuses[i].claude_permissions = { ...check, action: check.action === 'WOULD_ADD' ? 'MISSING' : check.action };
+    }
+  });
+
   return {
     ok: true,
     scope: String(options.scope ?? 'user').trim().toLowerCase(),
@@ -540,7 +559,10 @@ function printUsage() {
     [
       'CraftHelm Skill Installer CLI (Claude Code / Codex / Gemini & Antigravity)',
       '',
-      'Usage: install-skills.mjs [--targets all|claude,codex,gemini] [--scope user|project] [--repo <path>] [--home-dir <path>] [--with-kouetsu] [--dry-run] [--force] [--status] [--uninstall]',
+      'Usage: install-skills.mjs [--targets all|claude,codex,gemini] [--scope user|project] [--repo <path>] [--home-dir <path>] [--with-kouetsu] [--skip-claude-permissions] [--dry-run] [--force] [--status] [--uninstall]',
+      '',
+      'Installing the claude target also adds the approval guard rules (deny "approve record|keygen", ask on',
+      'contract/stage approvals) to that scope\'s .claude/settings.json. Rules are only added, never removed.',
       '',
     ].join('\n'),
   );
@@ -569,6 +591,7 @@ if (isMainModule(import.meta.url)) {
       dryRun: Boolean(args['dry-run']),
       force: Boolean(args.force),
       withKouetsu: Boolean(args['with-kouetsu']),
+      skipClaudePermissions: Boolean(args['skip-claude-permissions']),
     };
 
     let res;

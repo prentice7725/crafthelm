@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { initCheckpoint } from '../../scripts/checkpoint.mjs';
 import { approveContractFile } from '../../scripts/contract.mjs';
 import { computeSnapshotDigest, getDiffText, runGit } from '../../scripts/lib/git.mjs';
-import { parseAddedLines, planMutants, recoverInterruptedProbe, runMutationProbe } from '../../scripts/lib/mutation-probe.mjs';
+import { maskNonCode, parseAddedLines, planMutants, recoverInterruptedProbe, runMutationProbe } from '../../scripts/lib/mutation-probe.mjs';
 import { getEvidenceManifestPath, getReviewPackagePath, getRunDir } from '../../scripts/lib/paths.mjs';
 import { publishReviewPackage } from '../../scripts/review-package.mjs';
 import { runVerify } from '../../scripts/verify.mjs';
@@ -99,6 +99,49 @@ describe('Mutation Probe: do the passing checks actually constrain the change?',
       assert.equal(planned[0].mutated, 'if (isMember && total > 100) {');
       // Files outside the requested source set are never planned.
       assert.deepEqual(planMutants({ repoRoot: repo, diffText, sourceFiles: [] }), []);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('masks string literals and trailing comments so their operators are never mutated', () => {
+    // Length is preserved and quotes stay, so columns in the masked line map onto the original.
+    assert.equal(maskNonCode('if (a >= b) log("a >= b"); // a <= b', 'x.js'), 'if (a >= b) log("      "); //       ');
+    assert.equal(maskNonCode("x = 'a == b' if ok else y  # true", 'm.py'), "x = '      ' if ok else y  #     ");
+    assert.equal(maskNonCode('const s = `a && b` && c;', 'x.ts'), 'const s = `      ` && c;');
+    assert.equal(maskNonCode('const q = "say \\"a < b\\"" + n;', 'x.js'), 'const q = "             " + n;');
+    assert.equal(maskNonCode('a /* x == y */ == b', 'x.c'), 'a /*        */ == b');
+    // Code, not comments or strings: a JS private field, a Rust lifetime, an unclosed quote.
+    assert.equal(maskNonCode('return this.#n >= 0;', 'x.js'), 'return this.#n >= 0;');
+    assert.equal(maskNonCode("fn f<'a>(x: &'a str) -> bool { x.len() >= 1 }", 'x.rs'), "fn f<'a>(x: &'a str) -> bool { x.len() >= 1 }");
+    assert.equal(maskNonCode("if c == '=' { n >= 1 }", 'x.rs'), "if c == ' ' { n >= 1 }");
+    assert.equal(maskNonCode('const t = "unterminated >= x', 'x.js'), 'const t = "unterminated >= x');
+
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-mask-'));
+    try {
+      fs.mkdirSync(path.join(repo, 'src'));
+      fs.writeFileSync(path.join(repo, 'src/msg.mjs'), [
+        'export function label(n) {',
+        '  if (n === 0) return "n === 0 is true";',
+        '  return "only a string: a >= b"; // and a comment: x <= y',
+        '}',
+        '',
+      ].join('\n'), 'utf8');
+      const diffText = [
+        'diff --git a/src/msg.mjs b/src/msg.mjs',
+        '--- /dev/null',
+        '+++ b/src/msg.mjs',
+        '@@ -0,0 +1,4 @@',
+        '+export function label(n) {',
+        '+  if (n === 0) return "n === 0 is true";',
+        '+  return "only a string: a >= b"; // and a comment: x <= y',
+        '+}',
+        '',
+      ].join('\n');
+      const planned = planMutants({ repoRoot: repo, diffText, sourceFiles: ['src/msg.mjs'] });
+      // Line 2 is mutated in the code, not in the string; line 3 has no operator outside string and comment.
+      assert.deepEqual(planned.map((m) => [m.line, m.operator, m.column]), [[2, 'eq_strict_flip', 8]]);
+      assert.equal(planned[0].mutated, 'if (n !== 0) return "n === 0 is true";');
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

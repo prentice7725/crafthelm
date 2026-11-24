@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
 import { SKILL_MODULES, renderHostSkillMarkdown } from './install-skills.mjs';
+import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { collectRelativeFiles } from './lib/crypto.mjs';
 import { DEFAULT_IGNORED_DIRS } from './lib/impact-languages.mjs';
@@ -72,6 +73,7 @@ export function initHost(options = {}) {
 
   const written = [];
   const skipped = [];
+  let claudePermissions = null;
 
   const universalKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'universal', 'skills', 'kouetsu');
   const codexKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'codex', 'skills', 'kouetsu');
@@ -165,6 +167,11 @@ export function initHost(options = {}) {
       written,
       skipped,
     );
+    // Merged, not overwritten: approval guards are added to any existing project settings.
+    if (!options.skipClaudePermissions) {
+      claudePermissions = applyClaudePermissionGuards({ settingsPath: path.join(repoRoot, '.claude', 'settings.json') });
+      if (claudePermissions.action === 'ADDED') written.push(claudePermissions.settings_path);
+    }
   }
 
   if (isAll || normHost === 'codex') {
@@ -192,6 +199,7 @@ export function initHost(options = {}) {
     detected_test_runners: detected.runners,
     written,
     skipped,
+    ...(claudePermissions ? { claude_permissions: claudePermissions } : {}),
   };
 }
 
@@ -200,7 +208,9 @@ function printUsage() {
     [
       'CraftHelm Host Initializer CLI',
       '',
-      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--force]',
+      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--skip-claude-permissions] [--force]',
+      '',
+      'With --host claude|all, approval guard rules are merged into <repo>/.claude/settings.json (added, never removed).',
       '',
     ].join('\n'),
   );
@@ -225,6 +235,7 @@ if (isMainModule(import.meta.url)) {
       testCommandTemplate: args['test-command-template'],
       customAnalyzer: args['custom-analyzer'],
       force: Boolean(args.force),
+      skipClaudePermissions: Boolean(args['skip-claude-permissions']),
     });
     process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
   } catch (err) {

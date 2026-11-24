@@ -3,7 +3,8 @@ import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
 import { checkContractReadiness } from './contract.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
-import { sha256CanonicalJson } from './lib/crypto.mjs';
+import { sha256CanonicalJson, sha256Text } from './lib/crypto.mjs';
+import { withTaskWrite, writeAtomic, writeTaskReceipt } from './lib/task-artifacts.mjs';
 import { getGitHead, isGitRepo, runGit } from './lib/git.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
 import { generateInterviewQuestions } from './lib/interview-questions.mjs';
@@ -120,16 +121,15 @@ export function runInterview(options = {}) {
 
   const taskId = options.taskId ?? input.task_id ?? allocateNextTaskId(repoRoot);
   const contractPath = getContractPath(repoRoot, taskId);
-  if (fs.existsSync(contractPath) && !options.overwrite) {
-    return {
-      ok: false,
-      status: 'TASK_EXISTS',
-      task_id: taskId,
-      contract_path: contractPath,
-      message: `Task contract "${taskId}" already exists. Pass --overwrite to update it or omit --task-id to create a new task.`,
-      artifacts_written: [],
-    };
-  }
+  const existingTask = () => ({
+    ok: false,
+    status: 'TASK_EXISTS',
+    task_id: taskId,
+    contract_path: contractPath,
+    message: `Task contract "${taskId}" already exists. Pass --overwrite to update it or omit --task-id to create a new task.`,
+    artifacts_written: [],
+  });
+  if (fs.existsSync(contractPath) && !options.overwrite) return existingTask();
 
   const requestText = options.request ?? input.request ?? '';
   const host = normalizeHostId(options.host ?? input.host ?? process.env.CRAFTHELM_HOST ?? repoConfig?.default_host ?? 'generic');
@@ -322,7 +322,6 @@ export function runInterview(options = {}) {
   assertValidSchema('execution', contract, `contract ${taskId}`);
 
   const docsAbsDir = path.join(repoRoot, docsRelDir);
-  fs.mkdirSync(docsAbsDir, { recursive: true });
 
   const reqMd = [
     `# Requirements — ${taskId}`,
@@ -386,22 +385,34 @@ export function runInterview(options = {}) {
     '',
   ].join('\n');
 
-  const writtenFiles = [];
-  for (const [name, content] of [
-    ['requirements.md', reqMd],
-    ['decisions.md', decMd],
-    ['open_questions.md', openQMd],
-    ['acceptance.md', accMd],
-    ['interview_questions.md', interviewQMd],
-  ]) {
-    const outPath = path.join(docsAbsDir, name);
-    fs.writeFileSync(outPath, content, 'utf8');
-    writtenFiles.push(outPath);
-  }
-
-  fs.mkdirSync(path.dirname(contractPath), { recursive: true });
-  fs.writeFileSync(contractPath, `${JSON.stringify(contract, null, 2)}\n`, 'utf8');
-  writtenFiles.push(contractPath);
+  const writtenFiles = withTaskWrite(repoRoot, taskId, () => {
+    if (fs.existsSync(contractPath) && !options.overwrite) return null;
+    fs.mkdirSync(docsAbsDir, { recursive: true });
+    const files = [];
+    const docHashes = {};
+    for (const [name, content] of [
+      ['requirements.md', reqMd],
+      ['decisions.md', decMd],
+      ['open_questions.md', openQMd],
+      ['acceptance.md', accMd],
+      ['interview_questions.md', interviewQMd],
+    ]) {
+      const file = path.join(docsAbsDir, name);
+      writeAtomic(file, content);
+      docHashes[name] = sha256Text(content);
+      files.push(file);
+    }
+    fs.mkdirSync(path.dirname(contractPath), { recursive: true });
+    const contractText = `${JSON.stringify(contract, null, 2)}\n`;
+    writeAtomic(contractPath, contractText);
+    writeTaskReceipt(repoRoot, taskId, {
+      docs_dir: toPosixPath(path.relative(repoRoot, docsAbsDir)),
+      docs: docHashes,
+      contract: sha256Text(contractText),
+    });
+    return [...files, contractPath];
+  });
+  if (!writtenFiles) return existingTask();
 
   const readiness = checkContractReadiness(contract);
   const nextQuestions = readiness.warnings.some((w) => w.code === 'E2E_MISSING')
@@ -476,7 +487,7 @@ if (isMainModule(import.meta.url)) {
     ...(typeof args.profile === 'string' ? { processProfile: args.profile } : {}),
     ...(args['strict-interview'] ? { strictInterview: true } : {}),
     approveContract: Boolean(args['approve-contract']),
-    approvalChannel: classifyApprovalChannel(),
+    approvalChannel: args['approve-contract'] ? classifyApprovalChannel() : undefined,
     actor: args.actor,
   });
   for (const w of res.warnings ?? []) {

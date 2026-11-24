@@ -9,7 +9,8 @@ import { runShellCommand } from './exec.mjs';
  * A passing test only matters if it would fail when the change is wrong. The probe breaks one changed
  * line at a time (flip a comparison, a boolean, an arithmetic operator), re-runs the checks that passed,
  * and expects at least one to fail. A mutant that survives is a concrete line the tests do not pin down.
- * Token-level and language-agnostic on purpose: no parser, no dependency, bounded cost.
+ * Token-level on purpose: no parser, no dependency, bounded cost. String literals and trailing comments
+ * on the line are masked first (`maskNonCode`), so an operator inside them is never mutated.
  *
  * Working-tree safety: every mutation is restored in a `finally`, and the original bytes are journaled
  * in the run directory first so an interrupted probe is repaired by the next call.
@@ -38,6 +39,100 @@ const OPERATORS = [
   { id: 'mul_to_div', pattern: /(?<=[\w)\]]\s)\*(?=\s[\w(])/, replace: '/' },
   { id: 'div_to_mul', pattern: /(?<=[\w)\]]\s)\/(?=\s[\w(])/, replace: '*' },
 ];
+
+const SLASH_COMMENT_EXTS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx', 'go', 'rs', 'java', 'kt', 'kts', 'cs', 'c', 'h', 'cc', 'cpp', 'cxx', 'hpp', 'hh', 'swift', 'scala', 'dart', 'php']);
+const HASH_COMMENT_EXTS = new Set(['py', 'rb', 'sh', 'bash', 'zsh', 'pl', 'pm', 'r', 'ex', 'exs', 'php']);
+// Languages where `'` delimits a single character, not a string (in Rust it may also start a lifetime).
+const CHAR_QUOTE_EXTS = new Set(['go', 'rs', 'java', 'kt', 'kts', 'cs', 'c', 'h', 'cc', 'cpp', 'cxx', 'hpp', 'hh', 'scala', 'swift']);
+const BACKTICK_STRING_EXTS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx', 'go']);
+const CHAR_LITERAL = /^'(\\[^']{1,10}|[^'\\])'/;
+
+function fileExt(file) {
+  const m = /\.([^./\\]+)$/.exec(file);
+  return m ? m[1].toLowerCase() : '';
+}
+
+/**
+ * Blank out string literal contents and trailing comments on one line, keeping its length, so operator
+ * matches land only in code. Quote characters are kept; everything between them becomes spaces.
+ * A quote that does not close on the same line is left alone: multi-line strings and block comments
+ * that started on an earlier line are not tracked. Unknown extensions get string masking only.
+ * @param {string} line
+ * @param {string} file
+ * @returns {string}
+ */
+export function maskNonCode(line, file) {
+  const ext = fileExt(file);
+  const slash = SLASH_COMMENT_EXTS.has(ext);
+  const hash = HASH_COMMENT_EXTS.has(ext);
+  const charQuote = CHAR_QUOTE_EXTS.has(ext);
+  const quotes = new Set(['"']);
+  if (!charQuote) quotes.add("'");
+  if (BACKTICK_STRING_EXTS.has(ext)) quotes.add('`');
+  const out = line.split('');
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) out[k] = ' ';
+  };
+  let i = 0;
+  while (i < line.length) {
+    const ch = line[i];
+    if (slash && ch === '/' && line[i + 1] === '/') {
+      blank(i + 2, line.length);
+      break;
+    }
+    if (slash && ch === '/' && line[i + 1] === '*') {
+      const end = line.indexOf('*/', i + 2);
+      blank(i + 2, end === -1 ? line.length : end);
+      if (end === -1) break;
+      i = end + 2;
+      continue;
+    }
+    // `#` right after an identifier char or `.` is code (`this.#x`, `$#arr`), not a comment.
+    if (hash && ch === '#' && !/[\w.$]/.test(line[i - 1] ?? '')) {
+      blank(i + 1, line.length);
+      break;
+    }
+    if (charQuote && ch === "'") {
+      // 'x' or an escape such as '\n'; anything else (a Rust lifetime) is code.
+      const m = CHAR_LITERAL.exec(line.slice(i));
+      if (m) blank(i + 1, i + m[0].length - 1);
+      i += m ? m[0].length : 1;
+      continue;
+    }
+    if (quotes.has(ch)) {
+      let k = i + 1;
+      while (k < line.length && line[k] !== ch) k += line[k] === '\\' ? 2 : 1;
+      if (k >= line.length) {
+        i += 1;
+        continue;
+      }
+      blank(i + 1, k);
+      i = k + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return out.join('');
+}
+
+/**
+ * First operator that matches code on a line, with strings and comments masked.
+ * @param {string} line
+ * @param {string} file
+ * @returns {{ op: { id: string, pattern: RegExp, replace: string }, column: number, length: number }|null}
+ */
+function findCodeOperator(line, file) {
+  const masked = maskNonCode(line, file);
+  for (const op of OPERATORS) {
+    const m = op.pattern.exec(masked);
+    if (m) return { op, column: m.index, length: m[0].length };
+  }
+  return null;
+}
+
+function applyAt(line, column, length, replacement) {
+  return line.slice(0, column) + replacement + line.slice(column + length);
+}
 
 /**
  * Parse a unified diff into the set of added line numbers (new-file numbering) per file.
@@ -88,9 +183,16 @@ export function planMutants(params) {
     for (const lineNo of lineNumbers) {
       const original = lines[lineNo - 1];
       if (original === undefined || !original.trim() || COMMENT_OR_IMPORT.test(original)) continue;
-      const op = OPERATORS.find((o) => o.pattern.test(original));
-      if (!op) continue;
-      mutants.push({ file, line: lineNo, operator: op.id, original: original.trim(), mutated: original.replace(op.pattern, op.replace).trim() });
+      const hit = findCodeOperator(original, file);
+      if (!hit) continue;
+      mutants.push({
+        file,
+        line: lineNo,
+        column: hit.column,
+        operator: hit.op.id,
+        original: original.trim(),
+        mutated: applyAt(original, hit.column, hit.length, hit.op.replace).trim(),
+      });
     }
   }
   // Spread the budget across files instead of spending it all on the first one.
@@ -156,8 +258,12 @@ export function runMutationProbe(params) {
     const originalBuf = fs.readFileSync(abs);
     const originalSha = sha256File(abs);
     const lines = originalBuf.toString('utf8').split('\n');
-    const op = OPERATORS.find((o) => o.id === mutant.operator);
-    lines[mutant.line - 1] = lines[mutant.line - 1].replace(op.pattern, op.replace);
+    // Re-locate on the current bytes and mutate only at the planned column, never at an earlier match.
+    const hit = findCodeOperator(lines[mutant.line - 1] ?? '', mutant.file);
+    if (!hit || hit.op.id !== mutant.operator || hit.column !== mutant.column) {
+      throw new Error(`MUTATION_PLAN_STALE: ${mutant.file}:${mutant.line} changed between planning and mutation.`);
+    }
+    lines[mutant.line - 1] = applyAt(lines[mutant.line - 1], hit.column, hit.length, hit.op.replace);
 
     fs.writeFileSync(
       journalPath(params.journalDir),

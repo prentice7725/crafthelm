@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { initCheckpoint } from '../../scripts/checkpoint.mjs';
+import { initCheckpoint, recordRepairRound } from '../../scripts/checkpoint.mjs';
 import { approveContractFile, validateContractFile } from '../../scripts/contract.mjs';
 import { DEFAULT_CLI_TIMEOUT_MS, resolveCommandTimeoutMs } from '../../scripts/crafthelm.mjs';
 import { runInterview } from '../../scripts/interview.mjs';
+import { runVerify } from '../../scripts/verify.mjs';
 import { isHelpRequested } from '../../scripts/lib/cli.mjs';
 import { runGit } from '../../scripts/lib/git.mjs';
 import { rebuildMemoryIndex, searchMemory } from '../../scripts/lib/memory.mjs';
-import { CRAFTHELM_ROOT } from '../../scripts/lib/paths.mjs';
+import { CRAFTHELM_ROOT, getCheckpointPath } from '../../scripts/lib/paths.mjs';
 
 const CRAFTHELM_CLI = path.join(CRAFTHELM_ROOT, 'scripts', 'crafthelm.mjs');
 
@@ -34,6 +35,7 @@ const ALL_SUBCOMMANDS = [
   'memory',
   'skills',
   'benchmark',
+  'calibrate',
 ];
 
 function createTempRepo(files) {
@@ -52,6 +54,97 @@ function createTempRepo(files) {
 }
 
 describe('Batch 1 CLI Safety, Task Isolation, E2E Readiness & Timeout Separation', () => {
+  it('verifies two uncommitted tasks independently and still reports edits to sibling documents', () => {
+    const repo = createTempRepo({ 'README.md': '# Concurrent tasks\n' });
+    try {
+      const first = runInterview({ repo, request: 'First task', e2eCommand: 'node --version', approveContract: true });
+      initCheckpoint({ repo, contract: first.contract_path, runId: 'ONE' });
+      const second = runInterview({ repo, request: 'Second task', e2eCommand: 'node --version', docsDir: 'docs/second' });
+      assert.deepEqual(runVerify({ repo, runId: 'ONE' }).failure_reasons, []);
+      approveContractFile(second.contract_path, 'operator');
+      initCheckpoint({ repo, contract: second.contract_path, docsDir: second.docs_dir, runId: 'TWO' });
+      for (const runId of ['ONE', 'TWO']) {
+        assert.deepEqual(runVerify({ repo, runId }).failure_reasons, []);
+      }
+      // A run created before generation receipts existed has only its frozen baseline.
+      fs.unlinkSync(path.join(repo, '.crafthelm', 'runs', '.interviews', first.task_id + '.json'));
+      assert.deepEqual(runVerify({ repo, runId: 'TWO' }).failure_reasons, []);
+      fs.appendFileSync(path.join(repo, second.docs_dir, 'requirements.md'), 'Manual edit\n');
+      const edited = runVerify({ repo, runId: 'ONE' });
+      assert.ok(edited.failure_reasons.some(r => r.includes('SCOPE_VIOLATION') && r.includes('docs/second/requirements.md')));
+      fs.writeFileSync(path.join(repo, second.docs_dir, 'extra.md'), 'Unexpected file\n');
+      const manuallyEdited = JSON.parse(fs.readFileSync(second.contract_path, 'utf8'));
+      manuallyEdited.title = 'Operator edit';
+      fs.writeFileSync(second.contract_path, JSON.stringify(manuallyEdited), 'utf8');
+      approveContractFile(second.contract_path, 'operator');
+      const reasons = runVerify({ repo, runId: 'ONE' }).failure_reasons;
+      assert.ok(reasons.some(r => r.includes('docs/second/extra.md')));
+      assert.ok(reasons.some(r => r.includes(`.crafthelm/contracts/${second.task_id}.json`)));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses repeated initialization through both CLIs without changing the contract or repair history', () => {
+    const repo = createTempRepo({ 'README.md': '# Retry\n' });
+    try {
+      const iv = runInterview({ repo, request: 'Retry task', e2eCommand: 'node --version', approveContract: true });
+      const cp = initCheckpoint({ repo, contract: iv.contract_path });
+      recordRepairRound({ repo, runId: cp.run_id, cause: 'test', check: 'AC-01', command: 'node --version' });
+      const cpFile = getCheckpointPath(repo, cp.run_id);
+      const before = fs.readFileSync(cpFile, 'utf8');
+      assert.equal(JSON.parse(before).repair_rounds.test, 1);
+      const contract = fs.readFileSync(iv.contract_path, 'utf8');
+      for (const args of [
+        ['checkpoint', 'init', '--contract', iv.contract_path],
+        ['contract', 'approve', iv.contract_path, '--actor', 'tester', '--init-run'],
+      ]) {
+        const cli = spawnSync(process.execPath, [CRAFTHELM_CLI, ...args, '--repo', repo], { encoding: 'utf8' });
+        assert.equal(cli.status, 1);
+        assert.match(cli.stderr, /RUN_EXISTS.*checkpoint resume/);
+        assert.equal(fs.readFileSync(cpFile, 'utf8'), before);
+        assert.equal(fs.readFileSync(iv.contract_path, 'utf8'), contract);
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a non-applicable E2E at strict approval and amends only acceptance and approval', () => {
+    const repo = createTempRepo({ 'README.md': '# E2E amendment\n' });
+    try {
+      const iv = runInterview({
+        repo, request: 'Fix calculation', changeKind: 'bugfix', docsDir: 'notes/task',
+        inputData: {
+          scope: { allow: ['src/calc.mjs'], protect: ['README.md'] },
+          acceptance: [{ id: 'AC-01', requirement: 'REQ-02', kind: 'e2e', applicable: false, not_applicable_reason: 'Unavailable' }],
+        },
+      });
+      assert.equal(validateContractFile(iv.contract_path).policy_ready, false);
+      assert.throws(() => approveContractFile(iv.contract_path, 'tester', { strictReadiness: true }), /E2E_MISSING/);
+      const before = JSON.parse(fs.readFileSync(iv.contract_path, 'utf8'));
+      approveContractFile(iv.contract_path, 'tester');
+      const acDoc = path.join(repo, iv.docs_dir, 'acceptance.md');
+      fs.appendFileSync(acDoc, '\nOperator note\n');
+      for (let i = 0; i < 2; i++) {
+        const cli = spawnSync(process.execPath, [CRAFTHELM_CLI, 'contract', 'add-e2e', iv.contract_path, '--e2e-cmd', 'node --version'], { encoding: 'utf8' });
+        assert.equal(cli.status, 0, cli.stderr);
+        assert.equal(JSON.parse(cli.stdout).policy_ready, true);
+      }
+      const after = JSON.parse(fs.readFileSync(iv.contract_path, 'utf8'));
+      const added = after.acceptance.pop();
+      assert.equal(added.id, 'AC-02');
+      assert.equal(added.requirement, 'REQ-02');
+      assert.equal(added.command, 'node --version');
+      assert.deepEqual(after, before);
+      const doc = fs.readFileSync(acDoc, 'utf8');
+      assert.match(doc, /Operator note/);
+      assert.equal(doc.split('| AC-02 |').length, 2);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it('handles --help and -h without creating any files across top-level and all 15 subcommands', () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-help-home-'));
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-help-cwd-'));

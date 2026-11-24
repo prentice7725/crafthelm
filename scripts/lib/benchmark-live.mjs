@@ -236,6 +236,8 @@ export async function runLiveBenchmark(options) {
       tasks: rows.length,
       hidden_check_pass_rate: rows.filter((r) => r.hidden_check_passed).length / rows.length,
       input_tokens: sumOrUnknown(rows.map((r) => r.usage.input_tokens)),
+      cache_read_tokens: sumOrUnknown(rows.map((r) => r.usage.cache_tokens)),
+      cache_creation_tokens: sumOrUnknown(rows.map((r) => r.usage.cache_creation_tokens)),
       output_tokens: sumOrUnknown(rows.map((r) => r.usage.output_tokens)),
       cost_usd: sumOrUnknown(rows.map((r) => r.usage.cost_usd)),
       wall_time_ms: rows.reduce((acc, r) => acc + r.wall_time_ms, 0),
@@ -252,12 +254,17 @@ export async function runLiveBenchmark(options) {
     sample_size_per_arm: tasks.length,
     notes: [
       'Tokens and cost are the values the host CLI reported for the worker invocation; anything it did not report is "unknown".',
+      'Input tokens exclude cached prompt tokens. Cache reads and writes are listed separately, and the cost covers all three.',
       'In arms B and C this harness plays the lead deterministically. An interactive lead\'s own tokens are not included, so B/C are a lower bound on a real CraftHelm session.',
       `Each arm ran ${tasks.length} task(s) once. This is too small a sample to support a general savings claim.`,
     ],
     results,
     totals,
   };
+}
+
+function formatCost(value) {
+  return typeof value === 'number' ? value.toFixed(4) : value;
 }
 
 export function formatLiveBenchmarkMarkdown(report) {
@@ -267,16 +274,16 @@ export function formatLiveBenchmarkMarkdown(report) {
     `- Host: \`${report.host}\` | Status: \`${report.status}\` | Generated: \`${report.generated_at ?? 'n/a'}\``,
     ...((report.notes ?? []).map((n) => `- ${n}`)),
     '',
-    '| Task | Arm | Model requested | Hidden check | Input tokens | Output tokens | Cost (USD) | Wall time (ms) |',
-    '|---|---|---|---|---|---|---|---|',
+    '| Task | Arm | Model requested | Models used | Hidden check | Input tokens | Cache read | Cache write | Output tokens | Cost (USD) | Wall time (ms) |',
+    '|---|---|---|---|---|---|---|---|---|---|---|',
     ...report.results.map(
-      (r) => `| ${r.task_id} | ${r.arm} | ${r.model_requested ?? 'host default'} | ${r.hidden_check_passed ? 'PASS' : 'FAIL'} | ${r.usage.input_tokens} | ${r.usage.output_tokens} | ${r.usage.cost_usd} | ${r.wall_time_ms} |`,
+      (r) => `| ${r.task_id} | ${r.arm} | ${r.model_requested ?? 'host default'} | ${r.usage.models_used?.length ? r.usage.models_used.join(', ') : 'unknown'} | ${r.hidden_check_passed ? 'PASS' : 'FAIL'} | ${r.usage.input_tokens} | ${r.usage.cache_tokens ?? 'unknown'} | ${r.usage.cache_creation_tokens ?? 'unknown'} | ${r.usage.output_tokens} | ${formatCost(r.usage.cost_usd)} | ${r.wall_time_ms} |`,
     ),
     '',
-    '| Arm | Hidden check pass rate | Input tokens | Output tokens | Cost (USD) | Lead tokens |',
-    '|---|---|---|---|---|---|',
+    '| Arm | Hidden check pass rate | Input tokens | Cache read | Cache write | Output tokens | Cost (USD) | Lead tokens |',
+    '|---|---|---|---|---|---|---|---|',
     ...Object.entries(report.totals ?? {}).map(
-      ([arm, t]) => `| ${arm} | ${t.hidden_check_pass_rate} | ${t.input_tokens} | ${t.output_tokens} | ${t.cost_usd} | ${t.lead_tokens} |`,
+      ([arm, t]) => `| ${arm} | ${t.hidden_check_pass_rate} | ${t.input_tokens} | ${t.cache_read_tokens ?? 'unknown'} | ${t.cache_creation_tokens ?? 'unknown'} | ${t.output_tokens} | ${formatCost(t.cost_usd)} | ${t.lead_tokens} |`,
     ),
     '',
   ];

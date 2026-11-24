@@ -92,7 +92,7 @@ describe('Delegation Records: observed dispatch, self-reported packets, honest U
       const done = runDelegation({ repo, runId: 'DLG-1-RUN', role: 'builder', taskType: 'implement', prompt: 'Set val to 2', execute: true, runner, resolve });
       assert.equal(done.ok, true);
       assert.equal(done.delegation_id, 'D001');
-      assert.deepEqual(done.usage, { status: 'measured', input_tokens: 1200, output_tokens: 340, cache_tokens: 5000, cost_usd: 0.0123 });
+      assert.deepEqual(done.usage, { status: 'measured', input_tokens: 1200, output_tokens: 340, cache_tokens: 5000, cache_creation_tokens: 'unknown', cost_usd: 0.0123, models_used: [] });
 
       // Single-provider isolation: only `claude` was ever invoked, with the routed model.
       assert.ok(calls.every((c) => c.cmd === 'claude'));

@@ -45,7 +45,9 @@
         "input_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
         "output_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
         "cache_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
-        "cost_usd": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] }
+        "cache_creation_tokens": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
+        "cost_usd": { "anyOf": [{ "type": "number", "minimum": 0 }, { "const": "unknown" }] },
+        "models_used": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
     "output_file": { "type": ["string", "null"] },

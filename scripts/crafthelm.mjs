@@ -42,6 +42,7 @@ const SUBCOMMANDS = new Map([
   ['memory', 'scripts/memory.mjs'],
   ['skills', 'scripts/skills.mjs'],
   ['benchmark', 'scripts/benchmark.mjs'],
+  ['calibrate', 'scripts/calibrate.mjs'],
 ]);
 
 function printHelp() {
@@ -58,7 +59,7 @@ function printHelp() {
       '  init-host        Install CraftHelm/Kouetsu host integration files into a target repository',
       '  install-skills   Register CraftHelm skill packages into Claude Code, Codex, and Gemini/Antigravity',
       '  interview        Run Source-First intake and generate contract + specs',
-      '  contract         validate | plan | approve an execution contract',
+      '  contract         validate | plan | add-e2e | approve an execution contract',
       '  checkpoint       init | acquire-lock | release-lock | stage | approve-stage | transition | record-repair | resume | handoff | replan | status',
       '  impact           Run AST + call-graph diff impact analysis and selective test recommendation',
       '  route            Route task to cost-efficient tier (deterministic | lightweight | standard | reasoning)',
@@ -70,6 +71,7 @@ function printHelp() {
       '  memory           index | search | decide | list Markdown SOT + SQLite FTS5 memory',
       '  skills           list | audit | lock | verify-lock external skills',
       '  benchmark        Run deterministic E01-E04, E10 comparison suite',
+      '  calibrate        lite: measure lite E2E-exemption limits against recorded bugfix verification rounds',
       '',
     ].join('\n'),
   );
