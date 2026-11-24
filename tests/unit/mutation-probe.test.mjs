@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { initCheckpoint } from '../../scripts/checkpoint.mjs';
 import { approveContractFile } from '../../scripts/contract.mjs';
+import { sha256Text } from '../../scripts/lib/crypto.mjs';
 import { computeSnapshotDigest, getDiffText, runGit } from '../../scripts/lib/git.mjs';
 import { maskNonCode, parseAddedLines, planMutants, recoverInterruptedProbe, runMutationProbe } from '../../scripts/lib/mutation-probe.mjs';
 import { getEvidenceManifestPath, getReviewPackagePath, getRunDir } from '../../scripts/lib/paths.mjs';
@@ -210,14 +211,43 @@ describe('Mutation Probe: do the passing checks actually constrain the change?',
 
       // Simulate a crash mid-probe: file mutated on disk, journal still present.
       const abs = path.join(repo, 'src/price.mjs');
-      fs.writeFileSync(
-        path.join(journalDir, 'mutation-journal.json'),
-        JSON.stringify({ file: 'src/price.mjs', original_base64: Buffer.from(NEW_SRC, 'utf8').toString('base64') }),
-        'utf8',
-      );
-      fs.writeFileSync(abs, NEW_SRC.replace('>=', '>'), 'utf8');
-      assert.deepEqual(recoverInterruptedProbe(repo, journalDir), { recovered: true, file: 'src/price.mjs' });
+      const journalFile = path.join(journalDir, 'mutation-journal.json');
+      const MUTATED = NEW_SRC.replace('>=', '>');
+      const writeJournal = (fields) => fs.writeFileSync(journalFile, JSON.stringify({
+        file: 'src/price.mjs',
+        original_sha256: sha256Text(NEW_SRC),
+        mutated_sha256: sha256Text(MUTATED),
+        original_base64: Buffer.from(NEW_SRC, 'utf8').toString('base64'),
+        ...fields,
+      }), 'utf8');
+      const rejected = () => fs.readdirSync(journalDir).filter((f) => f.startsWith('mutation-journal.rejected-'));
+
+      writeJournal({});
+      fs.writeFileSync(abs, MUTATED, 'utf8');
+      assert.deepEqual(recoverInterruptedProbe(repo, journalDir), { recovered: true, file: 'src/price.mjs', restored_sha256: sha256Text(NEW_SRC) });
       assert.equal(fs.readFileSync(abs, 'utf8'), NEW_SRC);
+      assert.deepEqual(recoverInterruptedProbe(repo, journalDir), { recovered: false });
+
+      // Edited since the probe: the user's newer content is kept, the journal is set aside.
+      writeJournal({});
+      const EDITED = `${NEW_SRC}export const extra = 1;\n`;
+      fs.writeFileSync(abs, EDITED, 'utf8');
+      assert.equal(recoverInterruptedProbe(repo, journalDir).problem, 'FILE_CHANGED_SINCE_PROBE');
+      assert.equal(fs.readFileSync(abs, 'utf8'), EDITED);
+      assert.equal(fs.existsSync(journalFile), false);
+
+      // A journal pointing outside the repository, or into .crafthelm/, never writes anything.
+      const outside = path.join(path.dirname(repo), `outside-${path.basename(repo)}.txt`);
+      for (const target of [path.relative(repo, outside), '.crafthelm/contracts/MUT-OFF.json']) {
+        writeJournal({ file: target });
+        assert.equal(recoverInterruptedProbe(repo, journalDir).problem, 'JOURNAL_PATH_REJECTED');
+      }
+      assert.equal(fs.existsSync(outside), false);
+
+      // A truncated journal is reported and moved aside instead of throwing.
+      fs.writeFileSync(journalFile, '{"file":"src/price.mjs","orig', 'utf8');
+      assert.equal(recoverInterruptedProbe(repo, journalDir).problem, 'JOURNAL_CORRUPT');
+      assert.equal(rejected().length, 4);
       assert.deepEqual(recoverInterruptedProbe(repo, journalDir), { recovered: false });
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });

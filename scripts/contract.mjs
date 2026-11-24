@@ -9,6 +9,13 @@ import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } 
 import { composeMethodologyPlan } from './lib/methodology.mjs';
 import { assertValidSchema, validateAgainstSchema } from './lib/schema.mjs';
 
+// Executable test kinds that can stand for "a test written for this change" (not e2e, not manual).
+const TARGETED_TEST_KINDS = new Set(['unit', 'fast', 'property', 'differential']);
+
+function normalizeCommand(command) {
+  return String(command ?? '').trim().replace(/\s+/g, ' ');
+}
+
 /**
  * Evaluate execution policy readiness (beyond schema validity), such as functional E2E requirements.
  * @param {object} contract
@@ -45,12 +52,14 @@ export function checkContractReadiness(contract) {
   // Without E2E, a lite run stands on its tailored test. A lone umbrella command (kind "test") is
   // graded SINGLE_GENERIC_CHECK (weak) by verify, which always revokes the exemption: say so before approval.
   if (liteExemptsE2eByContract(contract)) {
-    const acceptance = Array.isArray(contract?.acceptance) ? contract.acceptance : [];
-    const hasTargeted = acceptance.some((ac) => ac && ac.applicable !== false && ac.kind !== 'test');
+    const acceptance = (Array.isArray(contract?.acceptance) ? contract.acceptance : []).filter((ac) => ac && ac.applicable !== false);
+    const umbrella = new Set(acceptance.filter((ac) => ac.kind === 'test').map((ac) => normalizeCommand(ac.command)));
+    // Only an executed test counts, and re-listing the umbrella command under another kind does not.
+    const hasTargeted = acceptance.some((ac) => TARGETED_TEST_KINDS.has(ac.kind) && !umbrella.has(normalizeCommand(ac.command)));
     if (!hasTargeted) {
       warnings.push({
         code: 'LITE_TARGETED_TEST_MISSING',
-        message: 'A lite contract without E2E needs an acceptance check written for this change; a single umbrella test command is weak evidence, and verify will revoke the exemption (SINGLE_GENERIC_CHECK).',
+        message: 'A lite contract without E2E needs an executed test written for this change (kind unit, fast, property or differential, with a command other than the umbrella test command); a single umbrella test command is weak evidence, and verify will revoke the exemption (SINGLE_GENERIC_CHECK).',
         guidance: 'Add the command that runs the test for the changed code: contract add-test <contract> --test-cmd "<command>" (or pass --test-cmd to start).',
       });
     }
@@ -216,6 +225,9 @@ export function addTargetedTest(contractPath, command, options = {}) {
 function amendCheck(file, kind, command, options) {
   const contract = JSON.parse(fs.readFileSync(file, 'utf8'));
   assertValidSchema('execution', contract, file);
+  if (kind === 'unit' && contract.acceptance.some((ac) => ac.kind === 'test' && normalizeCommand(ac.command) === normalizeCommand(command))) {
+    throw new Error(`--test-cmd "${command}" is the umbrella test command already in the contract; give the command that runs the test for the changed code.`);
+  }
   const existing = contract.acceptance.find(ac => ac.kind === kind && ac.applicable !== false && ac.command === command);
   if (!existing) {
     let n = 1;
@@ -292,8 +304,7 @@ if (isMainModule(import.meta.url)) {
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'add-test') {
       const res = addTargetedTest(target, args['test-cmd'], { docsDir: args['docs-dir'] });
-      process.stdout.write(`${JSON.stringify(res, null, 2)}
-`);
+      process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'plan') {
       const res = planFromContract(target);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);

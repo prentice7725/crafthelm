@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sha256File, sha256Text } from './crypto.mjs';
+import { sha256Buffer, sha256File, sha256Text } from './crypto.mjs';
 import { runShellCommand } from './exec.mjs';
+import { writeAtomic } from './task-artifacts.mjs';
 
 /**
  * Mutation probe: a deterministic substitute for the cross-model review a single provider cannot give.
@@ -223,17 +225,53 @@ function journalPath(journalDir) {
 
 /**
  * Restore a file left mutated by an interrupted probe. Safe to call when nothing is pending.
+ *
+ * The journal sits under `.crafthelm/runs/`, which anything in the workspace can write, so it is
+ * not trusted blindly: the target must stay inside the repository (never `.git/` or `.crafthelm/`),
+ * the stored original must match its recorded hash, and the file is only rewritten while it still
+ * holds the mutated bytes. A file edited since the probe is left alone. A journal that cannot be
+ * used is moved aside so it never blocks verification, and the reason is returned.
  * @param {string} repoRoot
  * @param {string} journalDir
- * @returns {{ recovered: boolean, file?: string }}
+ * @returns {{ recovered: boolean, file?: string, restored_sha256?: string, problem?: string, detail?: string }}
  */
 export function recoverInterruptedProbe(repoRoot, journalDir) {
   const jp = journalPath(journalDir);
   if (!fs.existsSync(jp)) return { recovered: false };
-  const journal = JSON.parse(fs.readFileSync(jp, 'utf8'));
-  fs.writeFileSync(path.join(repoRoot, journal.file), Buffer.from(journal.original_base64, 'base64'));
+  const setAside = (problem, detail, file) => {
+    fs.renameSync(jp, path.join(journalDir, `mutation-journal.rejected-${Date.now()}-${randomUUID().slice(0, 8)}.json`));
+    return { recovered: false, problem, detail, ...(file ? { file } : {}) };
+  };
+
+  let journal;
+  try {
+    journal = JSON.parse(fs.readFileSync(jp, 'utf8'));
+  } catch (err) {
+    return setAside('JOURNAL_CORRUPT', `journal is not valid JSON: ${err.message}`);
+  }
+  const root = path.resolve(repoRoot);
+  const rel = typeof journal?.file === 'string' ? journal.file : '';
+  const abs = path.resolve(root, rel);
+  const relPosix = path.relative(root, abs).split(path.sep).join('/');
+  if (!rel || relPosix === '' || relPosix === '..' || relPosix.startsWith('../') || path.isAbsolute(relPosix) || /^(\.git|\.crafthelm)(\/|$)/.test(relPosix)) {
+    return setAside('JOURNAL_PATH_REJECTED', `journal target "${rel}" is outside the repository's source tree`, rel);
+  }
+  const original = Buffer.from(String(journal.original_base64 ?? ''), 'base64');
+  if (sha256Buffer(original) !== journal.original_sha256) {
+    return setAside('JOURNAL_CORRUPT', 'stored original does not match original_sha256', relPosix);
+  }
+  const current = fs.existsSync(abs) ? sha256File(abs) : null;
+  if (current === journal.original_sha256) {
+    // The finally block restored it before the process died; only the journal is left.
+    fs.rmSync(jp, { force: true });
+    return { recovered: false, file: relPosix };
+  }
+  if (!journal.mutated_sha256 || current !== journal.mutated_sha256) {
+    return setAside('FILE_CHANGED_SINCE_PROBE', 'the file no longer holds the mutated content; it was left as it is', relPosix);
+  }
+  writeAtomic(abs, original);
   fs.rmSync(jp, { force: true });
-  return { recovered: true, file: journal.file };
+  return { recovered: true, file: relPosix, restored_sha256: journal.original_sha256 };
 }
 
 /**
@@ -265,14 +303,20 @@ export function runMutationProbe(params) {
     }
     lines[mutant.line - 1] = applyAt(lines[mutant.line - 1], hit.column, hit.length, hit.op.replace);
 
-    fs.writeFileSync(
+    const mutatedText = lines.join('\n');
+    // Atomic, and with the mutated hash: recovery restores only a file still in the mutated state.
+    writeAtomic(
       journalPath(params.journalDir),
-      JSON.stringify({ file: mutant.file, original_sha256: originalSha, original_base64: originalBuf.toString('base64') }),
-      'utf8',
+      JSON.stringify({
+        file: mutant.file,
+        original_sha256: originalSha,
+        mutated_sha256: sha256Text(mutatedText),
+        original_base64: originalBuf.toString('base64'),
+      }),
     );
     let killedBy = null;
     try {
-      fs.writeFileSync(abs, lines.join('\n'), 'utf8');
+      fs.writeFileSync(abs, mutatedText, 'utf8');
       for (const cmd of params.commands) {
         const res = runShellCommand(cmd.command, { cwd: params.repoRoot, timeoutMs: params.timeoutMs });
         if (res.exitCode !== (cmd.expected_exit_code ?? 0)) {

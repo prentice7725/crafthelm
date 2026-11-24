@@ -8,7 +8,8 @@ import { approveContractFile, checkContractReadiness } from '../../scripts/contr
 import { runInterview } from '../../scripts/interview.mjs';
 import { runGit } from '../../scripts/lib/git.mjs';
 import { evaluateLiteProfile } from '../../scripts/lib/lite-profile.mjs';
-import { getReviewPackagePath, getRunDir } from '../../scripts/lib/paths.mjs';
+import { sha256Text } from '../../scripts/lib/crypto.mjs';
+import { getEvidenceManifestPath, getReviewPackagePath, getRunDir } from '../../scripts/lib/paths.mjs';
 import { publishReviewPackage } from '../../scripts/review-package.mjs';
 import { runVerify } from '../../scripts/verify.mjs';
 
@@ -117,14 +118,25 @@ describe('Lite Profile: conditional E2E exemption for small bugfixes', () => {
       // State after a probe was killed mid-mutation: the journal holds the original, the file is mutated.
       const evidenceDir = path.join(getRunDir(repo, runId), 'evidence');
       fs.mkdirSync(evidenceDir, { recursive: true });
-      fs.writeFileSync(path.join(evidenceDir, 'mutation-journal.json'), JSON.stringify({ file: 'src/range.mjs', original_base64: Buffer.from(FIXED).toString('base64') }));
-      fs.writeFileSync(path.join(repo, 'src/range.mjs'), FIXED.replace('<=', '<'), 'utf8');
+      const MUTATED = FIXED.replace('<=', '<');
+      fs.writeFileSync(path.join(evidenceDir, 'mutation-journal.json'), JSON.stringify({
+        file: 'src/range.mjs',
+        original_sha256: sha256Text(FIXED),
+        mutated_sha256: sha256Text(MUTATED),
+        original_base64: Buffer.from(FIXED).toString('base64'),
+      }));
+      fs.writeFileSync(path.join(repo, 'src/range.mjs'), MUTATED, 'utf8');
 
       const v = runVerify({ repo, runId });
       assert.equal(fs.readFileSync(path.join(repo, 'src/range.mjs'), 'utf8'), FIXED);
       assert.equal(fs.existsSync(path.join(evidenceDir, 'mutation-journal.json')), false);
       // The checks ran on the restored source, so the boundary test passes.
       assert.equal(v.technical_status, 'PARTIAL', v.failure_reasons.join(' | '));
+      // The reviewer can see that verify rewrote a file before checking it.
+      const manifest = JSON.parse(fs.readFileSync(getEvidenceManifestPath(repo, runId), 'utf8'));
+      assert.deepEqual(manifest.probe_recovery, { status: 'RESTORED', file: 'src/range.mjs', restored_sha256: sha256Text(FIXED), problem: null, detail: null });
+      publishReviewPackage({ repo, runId });
+      assert.match(fs.readFileSync(getReviewPackagePath(repo, runId), 'utf8'), /중단된 뮤테이션 검사가 남긴 변이를 검증 직전에 되돌림 \(`src\/range\.mjs`\)/);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -137,9 +149,13 @@ describe('Lite Profile: conditional E2E exemption for small bugfixes', () => {
       // 75 lines in a file git does not track yet: over the default 60-line limit either way.
       const body = Array.from({ length: 75 }, (_, i) => `export const v${i} = ${i} > 1;`).join('\n');
       fs.writeFileSync(path.join(repo, 'src/extra.mjs'), `${body}\n`, 'utf8');
+      // A binary file adds no lines in git's diff, staged or not.
+      const binary = Buffer.alloc(4096, 0x41);
+      for (let i = 0; i < binary.length; i += 50) binary[i] = i % 100 === 0 ? 0x0a : 0x00;
+      fs.writeFileSync(path.join(repo, 'src/icon.wasm'), binary);
       const sizes = [];
       for (const stage of ['untracked', 'staged']) {
-        if (stage === 'staged') runGit(repo, ['add', 'src/extra.mjs']);
+        if (stage === 'staged') runGit(repo, ['add', 'src/extra.mjs', 'src/icon.wasm']);
         const v = runVerify({ repo, runId });
         assert.equal(v.process_profile.e2e_exempted, false, stage);
         sizes.push(v.process_profile.observed.added_lines);

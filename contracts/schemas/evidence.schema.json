@@ -160,6 +160,18 @@
         }
       }
     },
+    "probe_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "file", "problem"],
+      "properties": {
+        "status": { "type": "string", "enum": ["RESTORED", "REJECTED"] },
+        "file": { "type": ["string", "null"] },
+        "restored_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "problem": { "type": ["string", "null"], "enum": ["JOURNAL_CORRUPT", "JOURNAL_PATH_REJECTED", "FILE_CHANGED_SINCE_PROBE", null] },
+        "detail": { "type": ["string", "null"] }
+      }
+    },
     "mutation_probe": {
       "type": "object",
       "additionalProperties": false,

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { addTargetedTest } from '../../scripts/contract.mjs';
+import { addTargetedTest, checkContractReadiness } from '../../scripts/contract.mjs';
 import { runFeedbackLoop } from '../../scripts/feedback-loop.mjs';
 import { runGit } from '../../scripts/lib/git.mjs';
 import { CRAFTHELM_ROOT, getApprovalDecisionPath, getCheckpointPath } from '../../scripts/lib/paths.mjs';
@@ -140,6 +140,16 @@ describe('Chained start: contract approval + run baseline in one call', () => {
       assert.ok(bare.warnings.some((w) => w.code === 'LITE_TARGETED_TEST_MISSING'));
       assert.equal(bare.run.initialized, false);
       assert.match(bare.next_command, /contract add-test .* --test-cmd/);
+
+      // Neither a manual check nor the umbrella command re-listed under another kind counts as a tailored test.
+      const saved = JSON.parse(fs.readFileSync(bare.contract_path, 'utf8'));
+      const umbrella = saved.acceptance[0];
+      const readyWith = (extra) => checkContractReadiness({ ...saved, acceptance: [umbrella, extra] }).policy_ready;
+      assert.equal(readyWith({ id: 'AC-02', requirement: 'REQ-01', kind: 'manual', command: 'check the limit by hand' }), false);
+      assert.equal(readyWith({ id: 'AC-02', requirement: 'REQ-01', kind: 'unit', command: ` ${umbrella.command}  ` }), false);
+      assert.equal(readyWith({ id: 'AC-02', requirement: 'REQ-01', kind: 'property', command: 'node tests/unit.test.mjs' }), true);
+      assert.throws(() => addTargetedTest(bare.contract_path, umbrella.command), /umbrella test command/);
+
       // The suggested fix amends the saved contract and makes it ready.
       const amended = addTargetedTest(bare.contract_path, 'node tests/unit.test.mjs');
       assert.equal(amended.policy_ready, true);
