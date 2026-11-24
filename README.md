@@ -150,4 +150,6 @@ node scripts/crafthelm.mjs install-skills --targets all --uninstall
 node scripts/crafthelm.mjs install-skills --targets all --scope project --repo <target-repo>
 ```
 
+Claude Code에 설치하면 승인 보호 규칙도 그 범위의 `settings.json`(사용자 범위는 `~/.claude/settings.json`, 프로젝트 범위는 `<repo>/.claude/settings.json`)에 추가합니다. 최종 인수 기록·키 생성 명령은 `deny`, 계약·단계 승인 명령은 `ask`입니다. 규칙은 추가만 하고 기존 규칙은 지우지 않으며, 원하지 않으면 `--skip-claude-permissions`를 붙입니다. `init-host --host claude`도 프로젝트 설정에 같은 규칙을 합칩니다. `doctor --host claude`는 규칙이 빠졌거나 설치된 스킬 사본이 현재 체크아웃과 다르면 경고와 다시 실행할 명령을 출력합니다.
+
 > 주의: 벤치마크 토큰/비용 절감 수치는 실측 전까지 약속하지 않으며, 미측정 항목은 `unknown`으로 출력합니다.

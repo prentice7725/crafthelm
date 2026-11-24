@@ -1,4 +1,6 @@
 import { BUILTIN_CLI_HOSTS, getHostAdapter, normalizeHostId } from '../hosts/registry.mjs';
+import { getSkillsInstallStatus } from './install-skills.mjs';
+import { inspectClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { runCommand } from './lib/exec.mjs';
 
@@ -67,6 +69,36 @@ export function runDoctor(options = {}) {
     );
   }
 
+  // Claude Code setup drift: guards missing from settings, or a skill copy older than this checkout.
+  // Advisory only: these never change `ok`, they tell the operator what to re-run.
+  const warnings = [];
+  if (hosts.claude) {
+    const guards = inspectClaudePermissionGuards({ homeDir: options.homeDir, repoRoot: options.repo });
+    hosts.claude.permission_guards = guards;
+    if (guards.status !== 'GUARDED') {
+      const missing = [...guards.missing.deny.map((r) => `deny ${r}`), ...guards.missing.ask.map((r) => `ask ${r}`)];
+      warnings.push({
+        code: 'CLAUDE_PERMISSION_GUARDS_MISSING',
+        detail: `Claude settings lack ${missing.length} approval guard rule(s): ${missing.join(', ')}`,
+        fix: 'node scripts/install-skills.mjs --targets claude (or init-host --host claude for a project)',
+      });
+    }
+    for (const f of guards.files.filter((x) => x.error)) {
+      warnings.push({ code: 'CLAUDE_SETTINGS_UNREADABLE', detail: `${f.path}: ${f.error}`, fix: 'Fix the JSON so its permission rules apply.' });
+    }
+    const scopes = [{ scope: 'user' }, ...(options.repo ? [{ scope: 'project', repoRoot: options.repo }] : [])];
+    const copies = scopes.flatMap((s) => getSkillsInstallStatus({ targets: 'claude', homeDir: options.homeDir, ...s }).targets)
+      .map((t) => ({ scope: t.scope, skill_dir: t.skill_dir, status: t.status }));
+    hosts.claude.skill_copies = copies;
+    for (const c of copies.filter((x) => x.status === 'OUTDATED')) {
+      warnings.push({
+        code: 'CLAUDE_SKILL_OUTDATED',
+        detail: `${c.scope} skill copy at ${c.skill_dir} differs from this CraftHelm checkout`,
+        fix: `node scripts/install-skills.mjs --targets claude --scope ${c.scope}`,
+      });
+    }
+  }
+
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   const runtimeOk = nodeMajor >= 24 && gitRes.exitCode === 0;
   const ok = requestedAvailable && runtimeOk && kouetsuOk;
@@ -83,6 +115,7 @@ export function runDoctor(options = {}) {
       platform: process.platform,
     },
     hosts,
+    warnings,
   };
 }
 
@@ -134,6 +167,9 @@ if (isMainModule(import.meta.url)) {
       if (h.limitations?.length) {
         process.stdout.write(`  Limitations: ${h.limitations.join(', ')}\n`);
       }
+    }
+    for (const w of report.warnings) {
+      process.stdout.write(`- Warning [${w.code}]: ${w.detail}\n  Fix: ${w.fix}\n`);
     }
   }
   process.exit(report.ok ? 0 : 1);
