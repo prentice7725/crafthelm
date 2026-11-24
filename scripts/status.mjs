@@ -107,6 +107,12 @@ function recommendForPendingContract(contractInfo, repoArg) {
       next_command: `node scripts/crafthelm.mjs contract add-e2e ${contractPath} --e2e-cmd "<E2E 명령>"`,
     };
   }
+  if (contractInfo.warnings.some(w => w.code === 'LITE_TARGETED_TEST_MISSING')) {
+    return {
+      next_action: `경량 계약(${contractInfo.task_id})에 이번 변경을 직접 검사하는 테스트 명령을 추가하세요. 범용 테스트 명령 하나로는 E2E 면제를 받을 수 없습니다.`,
+      next_command: `node scripts/crafthelm.mjs contract add-test ${contractPath} --test-cmd "<전용 테스트 명령>"`,
+    };
+  }
   if (!contractInfo.policy_ready) {
     return {
       next_action: contractInfo.warnings.map(w => w.guidance).join(' '),

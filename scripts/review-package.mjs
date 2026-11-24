@@ -120,6 +120,12 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     : '**전체 (full)** — 면제 없음';
 
   const riskRows = [];
+  const recovery = manifest.probe_recovery;
+  if (recovery?.status === 'RESTORED') {
+    riskRows.push(`| low | 중단된 뮤테이션 검사가 남긴 변이를 검증 직전에 되돌림 (\`${recovery.file}\`) | 되돌린 내용이 기대한 원본이 아니면 검증 대상이 바뀜 | \`${recovery.file}\`의 현재 내용이 의도한 수정인지 확인 | 승인자 |`);
+  } else if (recovery?.status === 'REJECTED') {
+    riskRows.push(`| medium | 뮤테이션 검사 복구 기록을 쓰지 않고 따로 보관함 (${recovery.problem}) | 변이된 소스가 남아 있을 수 있음 | ${recovery.file ? `\`${recovery.file}\`` : '변경 파일'}에 의도하지 않은 연산자 변경이 없는지 확인 | 승인자 |`);
+  }
   if (procProfile.e2e_exempted) {
     riskRows.push('| medium | 경량 프로필로 E2E 실행 검증을 면제함 | 단위 검사가 놓친 통합 문제는 드러나지 않음 | 변경된 동작을 실제 실행 흐름에서 직접 확인 | 승인자 |');
   }

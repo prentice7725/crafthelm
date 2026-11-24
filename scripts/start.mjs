@@ -177,27 +177,22 @@ export function startTask(options = {}) {
       protect: ['tests/acceptance/**', 'docs/approved/**', 'REVIEW.md', '.crafthelm/reliability-rules.json'],
     };
   }
-  if (!['npm test', 'node --test'].includes(cmdHints.suggested_test_command)) {
-    inputData.acceptance = [
-      {
-        id: 'AC-01',
-        requirement: 'REQ-01',
-        kind: 'test',
-        command: cmdHints.suggested_test_command,
-        expected_exit_code: 0,
-      },
-      ...(e2eCommand
-        ? [
-            {
-              id: 'AC-02',
-              requirement: 'REQ-01',
-              kind: 'e2e',
-              command: e2eCommand,
-              expected_exit_code: 0,
-            },
-          ]
-        : []),
+  // --test-cmd: the test written for this change (kind "unit"). A lite contract without E2E needs it,
+  // because the umbrella command alone is graded SINGLE_GENERIC_CHECK (weak) and loses the exemption.
+  const testCommand = options.testCommand ? String(options.testCommand).trim() : '';
+  if (testCommand || !['npm test', 'node --test'].includes(cmdHints.suggested_test_command)) {
+    const checks = [
+      { kind: 'test', command: cmdHints.suggested_test_command },
+      ...(testCommand ? [{ kind: 'unit', command: testCommand }] : []),
+      ...(e2eCommand ? [{ kind: 'e2e', command: e2eCommand }] : []),
     ];
+    inputData.acceptance = checks.map((c, i) => ({
+      id: `AC-${String(i + 1).padStart(2, '0')}`,
+      requirement: 'REQ-01',
+      kind: c.kind,
+      command: c.command,
+      expected_exit_code: 0,
+    }));
   }
 
   const taskId = options.taskId ?? allocateNextTaskId(repoRoot);
@@ -280,6 +275,9 @@ function finishStart({ options, repoArg, repoRoot, requestText, detected, cmdHin
   } else if (iv.warnings?.some((w) => w.code === 'LITE_PROFILE_NOT_ELIGIBLE')) {
     nextAction = '경량 프로필(lite)은 버그 수정(bugfix)에만 쓸 수 있습니다. 프로필을 빼고 다시 실행하세요.';
     nextCommand = `node scripts/crafthelm.mjs start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite`;
+  } else if (iv.warnings?.some((w) => w.code === 'LITE_TARGETED_TEST_MISSING')) {
+    nextAction = '경량 프로필(lite)은 E2E 대신 이번 변경을 직접 검사하는 테스트에 기대므로, 범용 테스트 명령 하나로는 면제를 받을 수 없습니다. 변경한 코드를 호출하는 테스트의 실행 명령을 계약에 추가하세요.';
+    nextCommand = `node scripts/crafthelm.mjs contract add-test ${quoteArg(contractDisplayPath)} --test-cmd ${quoteArg('<전용 테스트 명령>')}`;
   } else if (!iv.policy_ready) {
     const hintE2e = cmdHints.suggested_e2e_command ?? '<E2E 또는 스모크 실행 명령>';
     nextAction = '기능 변경 계약에 E2E/스모크 확인 명령이 빠졌습니다. 아래 명령에 실제 동작 확인 명령을 지정해 계약을 보완하세요.';
@@ -366,7 +364,7 @@ function printUsage() {
     [
       'CraftHelm Start CLI (Doctor + Repo Detection + Interview Onboarding)',
       '',
-      'Usage: start.mjs "<task description>" [--repo .] [--host <host>] [--change-kind feature|bugfix|refactor|docs|research] [--e2e-cmd "<cmd>"] [--scope-allow <globs>] [--task-id <id>] [--overwrite] [--approve-contract --actor <name>] [--init-run [--run-id <id>]] [--strict-interview] [--profile full|lite] [--json]',
+      'Usage: start.mjs "<task description>" [--repo .] [--host <host>] [--change-kind feature|bugfix|refactor|docs|research] [--e2e-cmd "<cmd>"] [--test-cmd "<cmd>"] [--scope-allow <globs>] [--task-id <id>] [--overwrite] [--approve-contract --actor <name>] [--init-run [--run-id <id>]] [--strict-interview] [--profile full|lite] [--json]',
       '',
       '  --profile lite   Small bugfix only: waives the E2E requirement while the diff stays within the lite limits',
       '                   and a tailored test reaches the change. verify fails with LITE_PROFILE_EXCEEDED otherwise.',
@@ -396,6 +394,7 @@ if (isMainModule(import.meta.url)) {
       taskId: args['task-id'],
       changeKind: args['change-kind'],
       e2eCommand: args['e2e-cmd'],
+      testCommand: typeof args['test-cmd'] === 'string' ? args['test-cmd'] : undefined,
       scopeAllow: args['scope-allow'],
       docsDir: args['docs-dir'],
       overwrite: Boolean(args.overwrite),

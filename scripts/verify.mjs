@@ -29,7 +29,7 @@ import { analyzeImpact } from './lib/impact-analysis.mjs';
 import { collectTriedAndFailed } from './lib/handoff.mjs';
 import { hasMemorySources, searchMemory } from './lib/memory.mjs';
 import { classifyTaskTier } from './lib/model-router.mjs';
-import { runMutationProbe } from './lib/mutation-probe.mjs';
+import { recoverInterruptedProbe, runMutationProbe } from './lib/mutation-probe.mjs';
 import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-observations.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
@@ -415,6 +415,17 @@ export function runVerify(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const runDir = getRunDir(repoRoot, runId);
+  // A probe killed mid-mutation leaves a mutated source and a journal. Restore it before anything
+  // reads the tree: the snapshot, the checks and the probe itself must all see the original bytes.
+  const recovered = recoverInterruptedProbe(repoRoot, path.join(runDir, 'evidence'));
+  let probeRecovery = null;
+  if (recovered.recovered) {
+    process.stderr.write(`[verify] Restored ${recovered.file} from an interrupted mutation probe\n`);
+    probeRecovery = { status: 'RESTORED', file: recovered.file, restored_sha256: recovered.restored_sha256, problem: null, detail: null };
+  } else if (recovered.problem) {
+    process.stderr.write(`[verify] Mutation journal set aside (${recovered.problem}): ${recovered.detail}\n`);
+    probeRecovery = { status: 'REJECTED', file: recovered.file ?? null, restored_sha256: null, problem: recovered.problem, detail: recovered.detail };
+  }
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
   const contractPath = options.contract ? path.resolve(options.contract) : getContractPath(repoRoot, checkpoint.task_id);
@@ -963,6 +974,7 @@ export function runVerify(options) {
       limits: liteProfile.limits,
       observed: liteProfile.observed,
     },
+    ...(probeRecovery ? { probe_recovery: probeRecovery } : {}),
     mutation_probe: mutationProbe
       ? {
           status: mutationProbe.status,

@@ -9,6 +9,13 @@ import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } 
 import { composeMethodologyPlan } from './lib/methodology.mjs';
 import { assertValidSchema, validateAgainstSchema } from './lib/schema.mjs';
 
+// Executable test kinds that can stand for "a test written for this change" (not e2e, not manual).
+const TARGETED_TEST_KINDS = new Set(['unit', 'fast', 'property', 'differential']);
+
+function normalizeCommand(command) {
+  return String(command ?? '').trim().replace(/\s+/g, ' ');
+}
+
 /**
  * Evaluate execution policy readiness (beyond schema validity), such as functional E2E requirements.
  * @param {object} contract
@@ -38,6 +45,22 @@ export function checkContractReadiness(contract) {
         code: 'E2E_MISSING',
         message: 'Functional feature/bugfix contract requires at least one e2e acceptance check; verify will fail with E2E_MISSING unless added or require_e2e_for_functional is false.',
         guidance: 'Add an acceptance item with kind: "e2e" (or pass --e2e-cmd "<command>" during interview).',
+      });
+    }
+  }
+
+  // Without E2E, a lite run stands on its tailored test. A lone umbrella command (kind "test") is
+  // graded SINGLE_GENERIC_CHECK (weak) by verify, which always revokes the exemption: say so before approval.
+  if (liteExemptsE2eByContract(contract)) {
+    const acceptance = (Array.isArray(contract?.acceptance) ? contract.acceptance : []).filter((ac) => ac && ac.applicable !== false);
+    const umbrella = new Set(acceptance.filter((ac) => ac.kind === 'test').map((ac) => normalizeCommand(ac.command)));
+    // Only an executed test counts, and re-listing the umbrella command under another kind does not.
+    const hasTargeted = acceptance.some((ac) => TARGETED_TEST_KINDS.has(ac.kind) && !umbrella.has(normalizeCommand(ac.command)));
+    if (!hasTargeted) {
+      warnings.push({
+        code: 'LITE_TARGETED_TEST_MISSING',
+        message: 'A lite contract without E2E needs an executed test written for this change (kind unit, fast, property or differential, with a command other than the umbrella test command); a single umbrella test command is weak evidence, and verify will revoke the exemption (SINGLE_GENERIC_CHECK).',
+        guidance: 'Add the command that runs the test for the changed code: contract add-test <contract> --test-cmd "<command>" (or pass --test-cmd to start).',
       });
     }
   }
@@ -170,7 +193,7 @@ function appendAcceptanceRow(file, taskId, ac, docsDir) {
     const old = fs.readFileSync(doc, 'utf8');
     const lines = old.split(/\r?\n/);
     if (lines[0] !== `# Acceptance Criteria — ${taskId}`) continue;
-    const row = `| ${ac.id} | ${ac.requirement} | e2e | \`${ac.command}\` | exit 0 |`;
+    const row = `| ${ac.id} | ${ac.requirement} | ${ac.kind} | \`${ac.command}\` | exit 0 |`;
     if (lines.includes(row)) {
       // Recover a previous interrupted append without claiming unrelated edits.
       lines.splice(lines.indexOf(row), 1);
@@ -190,20 +213,29 @@ function appendAcceptanceRow(file, taskId, ac, docsDir) {
 /** Amend a saved contract without reconstructing it from onboarding defaults. */
 export function addE2eCriterion(contractPath, command, options = {}) {
   if (typeof command !== 'string' || !command.trim()) throw new Error('A non-empty --e2e-cmd is required.');
-  return withContractWrite(contractPath, file => amendE2e(file, command.trim(), options));
+  return withContractWrite(contractPath, file => amendCheck(file, 'e2e', command.trim(), options));
 }
 
-function amendE2e(file, command, options) {
+/** Add the test written for this change (kind "unit"), which a lite contract needs when it has no E2E. */
+export function addTargetedTest(contractPath, command, options = {}) {
+  if (typeof command !== 'string' || !command.trim()) throw new Error('A non-empty --test-cmd is required.');
+  return withContractWrite(contractPath, file => amendCheck(file, 'unit', command.trim(), options));
+}
+
+function amendCheck(file, kind, command, options) {
   const contract = JSON.parse(fs.readFileSync(file, 'utf8'));
   assertValidSchema('execution', contract, file);
-  const existing = contract.acceptance.find(ac => ac.kind === 'e2e' && ac.applicable !== false && ac.command === command);
+  if (kind === 'unit' && contract.acceptance.some((ac) => ac.kind === 'test' && normalizeCommand(ac.command) === normalizeCommand(command))) {
+    throw new Error(`--test-cmd "${command}" is the umbrella test command already in the contract; give the command that runs the test for the changed code.`);
+  }
+  const existing = contract.acceptance.find(ac => ac.kind === kind && ac.applicable !== false && ac.command === command);
   if (!existing) {
     let n = 1;
     const ids = new Set(contract.acceptance.map(ac => ac.id));
     while (ids.has(`AC-${String(n).padStart(2, '0')}`)) n++;
     const ac = {
       id: `AC-${String(n).padStart(2, '0')}`, requirement: contract.acceptance[0].requirement,
-      kind: 'e2e', command, expected_exit_code: 0,
+      kind, command, expected_exit_code: 0,
     };
     contract.acceptance.push(ac);
     contract.approval = { require_on: contract.approval.require_on, contract_approved: false };
@@ -231,6 +263,7 @@ function printUsage() {
       '  contract.mjs validate <contractPath>',
       '  contract.mjs plan     <contractPath>',
       '  contract.mjs add-e2e  <contractPath> --e2e-cmd "<command>" [--docs-dir <dir>]',
+      '  contract.mjs add-test <contractPath> --test-cmd "<command>" [--docs-dir <dir>]   (test written for this change, kind "unit")',
       '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--init-run [--repo <path>] [--run-id <id>]]',
       '',
       '  --init-run   After approval, also freeze the run baseline (checkpoint init). Implies --strict.',
@@ -269,6 +302,9 @@ if (isMainModule(import.meta.url)) {
     } else if (subcommand === 'add-e2e') {
       const res = addE2eCriterion(target, args['e2e-cmd'], { docsDir: args['docs-dir'] });
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
+    } else if (subcommand === 'add-test') {
+      const res = addTargetedTest(target, args['test-cmd'], { docsDir: args['docs-dir'] });
+      process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'plan') {
       const res = planFromContract(target);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
@@ -295,7 +331,7 @@ if (isMainModule(import.meta.url)) {
       for (const w of res.warnings ?? []) process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else {
-      throw new Error('Usage: contract.mjs <validate|plan|add-e2e|approve> <contractPath> [options]');
+      throw new Error('Usage: contract.mjs <validate|plan|add-e2e|add-test|approve> <contractPath> [options]');
     }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);

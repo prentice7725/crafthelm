@@ -63,7 +63,7 @@ describe('Lite limit calibration from recorded verification rounds', () => {
       const caught = calibrateLiteLimits({ repos: [repo], minSamples: 5 });
       assert.equal(caught.verdict, 'DEFAULT_TOO_LOOSE');
       assert.equal(caught.current.e2e_catches, 1);
-      assert.deepEqual(caught.current.catch_examples, [`${path.basename(repo)}:CATCH`]);
+      assert.deepEqual(caught.current.catch_examples, [`${path.resolve(repo)}:CATCH`]);
       // Candidates that exclude the catch stay clean; the widest one is suggested.
       const tight = caught.candidates.find((c) => c.max_changed_source_files === 1 && c.max_added_lines === 300);
       assert.equal(tight.e2e_catches, 0);
@@ -95,6 +95,23 @@ describe('Lite limit calibration from recorded verification rounds', () => {
       }
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps repositories with the same folder name apart, whatever the input order', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-calib-names-'));
+    try {
+      const a = path.join(root, 'x', 'app');
+      const b = path.join(root, 'y', 'app');
+      writeObservations(a, 'R1', [round(1)]);
+      writeObservations(b, 'R1', [round(2, { e2e: 'FAIL' })]);
+      const verdicts = [[a, b], [b, a]].map((repos) => {
+        const r = calibrateLiteLimits({ repos, minSamples: 1 });
+        return [r.bugfix_runs, r.current.informative_runs, r.current.e2e_catches, r.verdict];
+      });
+      assert.deepEqual(verdicts, [[2, 2, 1, 'DEFAULT_TOO_LOOSE'], [2, 2, 1, 'DEFAULT_TOO_LOOSE']]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 

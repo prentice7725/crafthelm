@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { initCheckpoint } from '../../scripts/checkpoint.mjs';
+import { approveContractFile } from '../../scripts/contract.mjs';
 import { runDoctor } from '../../scripts/doctor.mjs';
+import { runGit } from '../../scripts/lib/git.mjs';
+import { runVerify } from '../../scripts/verify.mjs';
 import { initHost } from '../../scripts/init-host.mjs';
 import { getSkillsInstallStatus, installSkills } from '../../scripts/install-skills.mjs';
 import {
@@ -120,6 +124,53 @@ describe('Claude permission guards reach the real settings files', () => {
       assert.ok(res.written.includes(settingsPath));
       assert.deepEqual(readJson(settingsPath).permissions.allow, ['Read']);
       assert.equal(inspectClaudePermissionGuards({ homeDir: repo, repoRoot: repo }).status, 'GUARDED');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('a project initialized for Claude passes its first verify; a later settings edit is still caught', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-perm-verify-'));
+    try {
+      runGit(repo, ['init', '-b', 'main']);
+      runGit(repo, ['config', 'user.name', 'CraftHelm Test']);
+      runGit(repo, ['config', 'user.email', 'test@crafthelm.local']);
+      const files = {
+        'README.md': '# Perm\n',
+        'src/app.mjs': 'export const val = 1;\n',
+        'tests/t.mjs': "import assert from 'node:assert/strict'; import { val } from '../src/app.mjs'; assert.equal(val, 2);\n",
+      };
+      for (const [rel, content] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+        fs.writeFileSync(path.join(repo, rel), content, 'utf8');
+      }
+      runGit(repo, ['add', '.']);
+      runGit(repo, ['commit', '-m', 'Baseline commit']);
+      assert.equal(initHost({ repo, host: 'claude' }).claude_permissions.action, 'ADDED');
+
+      const contractPath = path.join(repo, '.crafthelm', 'contracts', 'PERM.json');
+      fs.mkdirSync(path.dirname(contractPath), { recursive: true });
+      fs.writeFileSync(contractPath, JSON.stringify({
+        schema_version: '0.3', task_id: 'PERM', request: 'Set val to 2', project_root: '.', host: 'claude', change_kind: 'bugfix',
+        methodology: { lifecycle: 'incremental', specification: 'lightweight', engineering: 'tdd', execution: 'full' },
+        scope: { allow: ['src/**'], protect: [] },
+        approval: { contract_approved: false, require_on: ['scope_change'] },
+        budgets: { max_worker_retries_per_cause: 3, max_lead_escalations: 3, max_wall_minutes: 30 },
+        acceptance: [
+          { id: 'AC-01', requirement: 'REQ-01', kind: 'unit', command: 'node tests/t.mjs', expected_exit_code: 0 },
+          { id: 'AC-02', requirement: 'REQ-01', kind: 'e2e', command: 'node tests/t.mjs', expected_exit_code: 0 },
+        ],
+        source_policy: { authority: ['git-main'], source_refs: ['README.md'] },
+      }));
+      approveContractFile(contractPath, 'operator');
+      initCheckpoint({ repo, contract: contractPath, runId: 'PERM-RUN' });
+      fs.writeFileSync(path.join(repo, 'src/app.mjs'), 'export const val = 2;\n', 'utf8');
+      assert.equal(runVerify({ repo, runId: 'PERM-RUN' }).technical_status, 'VERIFIED');
+
+      // Loosening the guards during the run is an out-of-scope change.
+      fs.writeFileSync(path.join(repo, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(*)'] } }));
+      const after = runVerify({ repo, runId: 'PERM-RUN' });
+      assert.ok(after.failure_reasons.some((r) => r.startsWith('SCOPE_VIOLATION') && r.includes('.claude/settings.json')), after.failure_reasons.join(' | '));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

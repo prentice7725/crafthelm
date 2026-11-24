@@ -131,8 +131,19 @@ export function getDiffText(cwd, baseRef = 'HEAD') {
   for (const rel of untracked) {
     const abs = path.join(cwd, rel);
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
-      const content = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
-      parts.push(`diff --git a/${rel} b/${rel}\nnew file\n--- /dev/null\n+++ b/${rel}\n${content.split('\n').map((l) => `+${l}`).join('\n')}\n`);
+      const raw = fs.readFileSync(abs);
+      // git treats a file with a NUL byte in its first 8000 bytes as binary and lists no lines for it.
+      if (raw.subarray(0, 8000).includes(0)) {
+        parts.push(`diff --git a/${rel} b/${rel}\nnew file mode 100644\nBinary files /dev/null and b/${rel} differ\n`);
+        continue;
+      }
+      const content = raw.toString('utf8').replace(/\r\n/g, '\n');
+      // Same shape as `git diff` for a staged new file, hunk header included, so line-numbered
+      // consumers (lite size limits, mutation probe, calibration) count it before and after `git add`.
+      const lines = content.split('\n');
+      if (content.endsWith('\n')) lines.pop();
+      const hunk = lines.length > 0 ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join('\n')}\n` : '';
+      parts.push(`diff --git a/${rel} b/${rel}\nnew file mode 100644\n--- /dev/null\n+++ b/${rel}\n${hunk}`);
     }
   }
   return parts.join('\n');
