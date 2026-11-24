@@ -35,6 +35,7 @@ const ALL_SUBCOMMANDS = [
   'memory',
   'skills',
   'benchmark',
+  'calibrate',
 ];
 
 function createTempRepo(files) {

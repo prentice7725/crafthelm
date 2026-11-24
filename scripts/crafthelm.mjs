@@ -42,6 +42,7 @@ const SUBCOMMANDS = new Map([
   ['memory', 'scripts/memory.mjs'],
   ['skills', 'scripts/skills.mjs'],
   ['benchmark', 'scripts/benchmark.mjs'],
+  ['calibrate', 'scripts/calibrate.mjs'],
 ]);
 
 function printHelp() {
@@ -70,6 +71,7 @@ function printHelp() {
       '  memory           index | search | decide | list Markdown SOT + SQLite FTS5 memory',
       '  skills           list | audit | lock | verify-lock external skills',
       '  benchmark        Run deterministic E01-E04, E10 comparison suite',
+      '  calibrate        lite: measure lite E2E-exemption limits against recorded bugfix verification rounds',
       '',
     ].join('\n'),
   );

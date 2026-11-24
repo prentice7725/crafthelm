@@ -30,6 +30,7 @@ import { collectTriedAndFailed } from './lib/handoff.mjs';
 import { hasMemorySources, searchMemory } from './lib/memory.mjs';
 import { classifyTaskTier } from './lib/model-router.mjs';
 import { runMutationProbe } from './lib/mutation-probe.mjs';
+import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-observations.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
 import { extractCommandTargets } from './lib/test-runners.mjs';
@@ -989,6 +990,23 @@ export function runVerify(options) {
 
   assertValidSchema('evidence', manifest, `evidence-manifest ${runId}`);
   writeJson(getEvidenceManifestPath(repoRoot, runId), manifest);
+
+  // Append-only calibration data for the lite limits (the manifest above is overwritten next round).
+  appendProfileObservation(runDir, {
+    schema_version: '0.3',
+    recorded_at: new Date().toISOString(),
+    run_id: runId,
+    task_id: contract.task_id,
+    target_snapshot_digest: targetSnapshotDigest,
+    profile: liteProfile.profile,
+    change_kind: liteProfile.observed.change_kind,
+    changed_source_files: liteProfile.observed.changed_source_files,
+    added_lines: liteProfile.observed.added_lines,
+    evidence_strength: evidenceStrength.level,
+    mutation_score: mutationProbe?.score ?? null,
+    ...summarizeCheckOutcome(checks, e2eExempted),
+    technical_status: technicalStatus,
+  });
 
   checkpoint.target_snapshot_digest = targetSnapshotDigest;
   checkpoint.current_stage = 'technical_verification';

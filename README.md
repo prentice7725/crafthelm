@@ -105,7 +105,7 @@ node scripts/crafthelm.mjs approve record --repo /path/to/repo --run-id CH-T001-
   --decision ACCEPTED --actor human-reviewer --rationale "검증 증빙 확인 완료"
 ```
 
-작은 버그 수정이고 E2E 명령을 마련하기 어렵다면 `--profile lite`를 붙이고 `--e2e-cmd`를 뺍니다. 변경이 소스 3개 파일·60줄 이내이고 변경 코드에 닿는 전용 테스트가 있을 때만 E2E 요구가 면제되며, 조건을 벗어나면 `verify`가 `LITE_PROFILE_EXCEEDED`로 실패합니다.
+작은 버그 수정이고 E2E 명령을 마련하기 어렵다면 `--profile lite`를 붙이고 `--e2e-cmd`를 뺍니다. 변경이 소스 3개 파일·60줄 이내이고 변경 코드에 닿는 전용 테스트가 있을 때만 E2E 요구가 면제되며, 조건을 벗어나면 `verify`가 `LITE_PROFILE_EXCEEDED`로 실패합니다. 이 한도는 아직 데이터 없이 정한 초기값입니다. E2E를 둔 버그 수정 실행이 쌓이면 `node scripts/crafthelm.mjs calibrate lite --repo <path>`로 한도 안에서 E2E가 실제로 결함을 잡은 적이 있는지 확인할 수 있습니다.
 
 계약을 먼저 검토하고 싶으면 `--approve-contract`를 빼고 실행한 뒤 안내되는 `contract approve <계약> --actor <이름> --init-run` 명령을 씁니다.
 
