@@ -132,6 +132,29 @@
       },
       "status": "discovery",
       "last_reviewed": "2026-11-19"
+    },
+    {
+      "id": "ponytail",
+      "upstream_url": "https://github.com/DietrichGebert/ponytail",
+      "commit_or_release": "v5.3.3@ebd8654c2c627f721eb8f9c0d1bd4090a29f9e10",
+      "license": "MIT",
+      "files_digest": "b98b15e1d683ee205e124b52b8d330128593f4a87b545cf8185e2712cd1bb25f",
+      "vendored_path": "external-skills/ponytail/AGENTS.md",
+      "maintainer": "DietrichGebert",
+      "capabilities": ["smallest_complete_change", "reuse_before_write", "shortcut_ledger"],
+      "supported_hosts": ["claude", "codex", "antigravity", "generic", "*"],
+      "required_tools": ["read"],
+      "permission_scope": ["read_markdown"],
+      "conflicts": [],
+      "test_report": {
+        "audited_at": "2026-11-26",
+        "executable_scripts_present": false,
+        "network_access": false,
+        "cross_provider_calls": false,
+        "notes": "Rules only: AGENTS.md vendored byte for byte and applied in the implementation stage. Upstream hooks (SessionStart, SubagentStart, UserPromptSubmit), status-line band, board and /ponytail-* commands are not adopted. Contract acceptance checks and scope.allow take precedence over its 'one small test' floor."
+      },
+      "status": "approved",
+      "last_reviewed": "2026-11-26"
     }
   ]
 }
