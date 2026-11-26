@@ -1,5 +1,6 @@
 import { BUILTIN_CLI_HOSTS, getHostAdapter, normalizeHostId } from '../hosts/registry.mjs';
 import { getSkillsInstallStatus } from './install-skills.mjs';
+import { inspectClaudeScopeHook } from './lib/claude-hooks.mjs';
 import { inspectClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { runCommand } from './lib/exec.mjs';
@@ -85,6 +86,19 @@ export function runDoctor(options = {}) {
     }
     for (const f of guards.files.filter((x) => x.error)) {
       warnings.push({ code: 'CLAUDE_SETTINGS_UNREADABLE', detail: `${f.path}: ${f.error}`, fix: 'Fix the JSON so its permission rules apply.' });
+    }
+    if (options.repo) {
+      const scopeHook = inspectClaudeScopeHook({ repoRoot: options.repo });
+      hosts.claude.scope_hook = scopeHook;
+      if (scopeHook.status !== 'REGISTERED') {
+        warnings.push({
+          code: scopeHook.status === 'STALE' ? 'CLAUDE_SCOPE_HOOK_STALE' : 'CLAUDE_SCOPE_HOOK_MISSING',
+          detail: scopeHook.status === 'STALE'
+            ? `${scopeHook.settings_path} registers a scope guard from another CraftHelm path; writes outside scope.allow are not blocked until it points at this checkout`
+            : `${scopeHook.settings_path} has no scope guard hook; writes outside scope.allow are reported by verify but not blocked beforehand`,
+          fix: 'node scripts/init-host.mjs --host claude --repo <repo>',
+        });
+      }
     }
     const scopes = [{ scope: 'user' }, ...(options.repo ? [{ scope: 'project', repoRoot: options.repo }] : [])];
     const copies = scopes.flatMap((s) => getSkillsInstallStatus({ targets: 'claude', homeDir: options.homeDir, ...s }).targets)

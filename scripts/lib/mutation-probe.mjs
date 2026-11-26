@@ -9,8 +9,9 @@ import { writeAtomic } from './task-artifacts.mjs';
  * Mutation probe: a deterministic substitute for the cross-model review a single provider cannot give.
  *
  * A passing test only matters if it would fail when the change is wrong. The probe breaks one changed
- * line at a time (flip a comparison, a boolean, an arithmetic operator), re-runs the checks that passed,
- * and expects at least one to fail. A mutant that survives is a concrete line the tests do not pin down.
+ * line at a time (flip a comparison, a boolean, an arithmetic operator, or remove a whole statement
+ * that has no operator), re-runs the checks that passed, and expects at least one to fail. A mutant
+ * that survives is a concrete line the tests do not pin down.
  * Token-level on purpose: no parser, no dependency, bounded cost. String literals and trailing comments
  * on the line are masked first (`maskNonCode`), so an operator inside them is never mutated.
  *
@@ -132,6 +133,59 @@ function findCodeOperator(line, file) {
   return null;
 }
 
+// Statement removal is limited to languages where the file still loads without the line, so a
+// kill means a test ran the code and noticed. In a compiled language a removed `return` is a
+// build error, which would count as a kill without any test reaching the line.
+const DELETE_STATEMENT_EXTS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx']);
+const DELETE_TO_PASS_EXTS = new Set(['py']);
+const PY_NOT_A_STATEMENT = /^(?:def|class|if|elif|else|for|while|try|except|finally|with|async|match|case|pass)\b|^@/;
+
+function bracketsBalanced(code) {
+  let depth = 0;
+  for (const ch of code) {
+    if ('([{'.includes(ch)) depth += 1;
+    else if (')]}'.includes(ch)) depth -= 1;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+/**
+ * Whole-statement removal for a line with no operator to flip: the line must be one complete
+ * statement, so that removing it changes behaviour without breaking the syntax around it.
+ * JS/TS: ends with `;`, brackets balanced, not an export or a string-only statement. The line is blanked.
+ * Python: brackets balanced, not a block header, decorator, docstring or continuation. The line becomes `pass`.
+ * @param {string} line
+ * @param {string} file
+ * @returns {{ op: { id: string, replace: string }, column: number, length: number }|null}
+ */
+function findLineDeletion(line, file) {
+  const ext = fileExt(file);
+  const masked = maskNonCode(line, file);
+  const indent = line.length - line.trimStart().length;
+  const hit = (replace) => ({ op: { id: 'line_delete', replace }, column: indent, length: line.length - indent });
+  if (DELETE_STATEMENT_EXTS.has(ext)) {
+    const cut = masked.indexOf('//');
+    const code = (cut === -1 ? masked : masked.slice(0, cut)).trim();
+    if (!code.endsWith(';') || /^(?:export\b|["'`])/.test(code) || !bracketsBalanced(code)) return null;
+    return hit('');
+  }
+  if (DELETE_TO_PASS_EXTS.has(ext)) {
+    const cut = masked.indexOf('#');
+    const code = (cut === -1 ? masked : masked.slice(0, cut)).trim();
+    if (!code || /[:,\\]$/.test(code) || /^["']/.test(code) || PY_NOT_A_STATEMENT.test(code) || !bracketsBalanced(code)) return null;
+    return hit('pass');
+  }
+  return null;
+}
+
+/**
+ * The mutation for a line: an operator flip when the code has one, otherwise statement removal.
+ */
+function findMutation(line, file) {
+  return findCodeOperator(line, file) ?? findLineDeletion(line, file);
+}
+
 function applyAt(line, column, length, replacement) {
   return line.slice(0, column) + replacement + line.slice(column + length);
 }
@@ -176,7 +230,8 @@ export function parseAddedLines(diffText) {
 export function planMutants(params) {
   const addedByFile = parseAddedLines(params.diffText);
   const wanted = new Set(params.sourceFiles);
-  const mutants = [];
+  const flips = [];
+  const removals = [];
   for (const [file, lineNumbers] of addedByFile) {
     if (!wanted.has(file)) continue;
     const abs = path.join(params.repoRoot, file);
@@ -185,18 +240,20 @@ export function planMutants(params) {
     for (const lineNo of lineNumbers) {
       const original = lines[lineNo - 1];
       if (original === undefined || !original.trim() || COMMENT_OR_IMPORT.test(original)) continue;
-      const hit = findCodeOperator(original, file);
+      const hit = findMutation(original, file);
       if (!hit) continue;
-      mutants.push({
+      (hit.op.id === 'line_delete' ? removals : flips).push({
         file,
         line: lineNo,
         column: hit.column,
         operator: hit.op.id,
         original: original.trim(),
-        mutated: applyAt(original, hit.column, hit.length, hit.op.replace).trim(),
+        mutated: applyAt(original, hit.column, hit.length, hit.op.replace).trim() || '(line removed)',
       });
     }
   }
+  // Operator flips first: under a tight budget they are the sharper probe.
+  const mutants = [...flips, ...removals];
   // Spread the budget across files instead of spending it all on the first one.
   const limit = params.maxMutants ?? 8;
   if (mutants.length <= limit) return mutants;
@@ -287,7 +344,7 @@ export function runMutationProbe(params) {
   }
   const planned = planMutants(params);
   if (planned.length === 0) {
-    return { status: 'NO_MUTABLE_LINES', reason: 'no changed source line matched a mutation operator', total: 0, killed: 0, survived: 0, score: null, mutants: [] };
+    return { status: 'NO_MUTABLE_LINES', reason: 'no changed source line has an operator to flip or a statement that can be removed', total: 0, killed: 0, survived: 0, score: null, mutants: [] };
   }
 
   const results = [];
@@ -297,7 +354,7 @@ export function runMutationProbe(params) {
     const originalSha = sha256File(abs);
     const lines = originalBuf.toString('utf8').split('\n');
     // Re-locate on the current bytes and mutate only at the planned column, never at an earlier match.
-    const hit = findCodeOperator(lines[mutant.line - 1] ?? '', mutant.file);
+    const hit = findMutation(lines[mutant.line - 1] ?? '', mutant.file);
     if (!hit || hit.op.id !== mutant.operator || hit.column !== mutant.column) {
       throw new Error(`MUTATION_PLAN_STALE: ${mutant.file}:${mutant.line} changed between planning and mutation.`);
     }

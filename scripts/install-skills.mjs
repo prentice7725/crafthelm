@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
+import { applyClaudeScopeHook } from './lib/claude-hooks.mjs';
 import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { sha256Text } from './lib/crypto.mjs';
 import { CRAFTHELM_ROOT, toPosixPath } from './lib/paths.mjs';
@@ -322,9 +323,16 @@ export function installSkills(options = {}) {
   const skipClaudePermissions = Boolean(options.skipClaudePermissions);
   const targets = resolveSkillTargets(options);
   // The skill is only half the install on Claude Code: its approval guards live in settings.json.
-  const guardClaude = (entry) => (entry.settingsPath && !skipClaudePermissions
-    ? { claude_permissions: applyClaudePermissionGuards({ settingsPath: entry.settingsPath, dryRun }) }
-    : {});
+  const skipClaudeHooks = Boolean(options.skipClaudeHooks);
+  // The scope guard hook goes into project settings only: in user settings it would run in every project.
+  const guardClaude = (entry) => ({
+    ...(entry.settingsPath && !skipClaudePermissions
+      ? { claude_permissions: applyClaudePermissionGuards({ settingsPath: entry.settingsPath, dryRun }) }
+      : {}),
+    ...(entry.settingsPath && entry.scope === 'project' && !skipClaudeHooks
+      ? { claude_scope_hook: applyClaudeScopeHook({ settingsPath: entry.settingsPath, dryRun, crafthelmRoot }) }
+      : {}),
+  });
   const results = [];
 
   for (const entry of targets) {
@@ -559,7 +567,7 @@ function printUsage() {
     [
       'CraftHelm Skill Installer CLI (Claude Code / Codex / Gemini & Antigravity)',
       '',
-      'Usage: install-skills.mjs [--targets all|claude,codex,gemini] [--scope user|project] [--repo <path>] [--home-dir <path>] [--with-kouetsu] [--skip-claude-permissions] [--dry-run] [--force] [--status] [--uninstall]',
+      'Usage: install-skills.mjs [--targets all|claude,codex,gemini] [--scope user|project] [--repo <path>] [--home-dir <path>] [--with-kouetsu] [--skip-claude-permissions] [--skip-claude-hooks] [--dry-run] [--force] [--status] [--uninstall]',
       '',
       'Installing the claude target also adds the approval guard rules (deny "approve record|keygen", ask on',
       'contract/stage approvals) to that scope\'s .claude/settings.json. Rules are only added, never removed.',
@@ -592,6 +600,7 @@ if (isMainModule(import.meta.url)) {
       force: Boolean(args.force),
       withKouetsu: Boolean(args['with-kouetsu']),
       skipClaudePermissions: Boolean(args['skip-claude-permissions']),
+      skipClaudeHooks: Boolean(args['skip-claude-hooks']),
     };
 
     let res;

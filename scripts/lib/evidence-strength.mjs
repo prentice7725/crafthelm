@@ -7,6 +7,8 @@
  * It is advisory: it never changes `technical_status`, it tells the human reviewer what to check by hand.
  */
 
+import { detectTestWeakening } from './test-weakening.mjs';
+
 const NON_BEHAVIORAL_KINDS = new Set(['docs', 'research']);
 const DOC_FILE_PATTERN = /\.(md|mdx|txt|rst|adoc)$/i;
 const EXECUTED_STATUSES = new Set(['PASS', 'FAIL', 'BLOCKED']);
@@ -37,6 +39,21 @@ const SIGNAL_DEFS = {
     detail: 'Some deliberately broken changed lines did not make any passing check fail.',
     human_check: 'Review the surviving mutants: those lines are not pinned down by a test.',
   },
+  TEST_FILE_DELETED: {
+    weight: 'weak',
+    detail: 'A test file was deleted in this change.',
+    human_check: 'Confirm the deleted tests were obsolete, not tests the change could not pass.',
+  },
+  TEST_SKIP_ADDED: {
+    weight: 'weak',
+    detail: 'A skip, only or todo marker was added to a test file.',
+    human_check: 'Confirm no failing test was switched off to make the suite pass.',
+  },
+  ASSERTIONS_REMOVED: {
+    weight: 'moderate',
+    detail: 'A test file lost more assertion lines than it gained.',
+    human_check: 'Compare the removed assertions with the request; they may have been the ones that failed.',
+  },
   IMPACT_INCONCLUSIVE: {
     weight: 'moderate',
     detail: 'Impact analysis could not build a usable graph, so test reach over the changed code is unknown.',
@@ -52,17 +69,32 @@ const SIGNAL_DEFS = {
  *   impact: { test_candidates?: string[], selected_tests?: Array<{ file: string }>, fallback_to_full?: boolean, fallback_code?: string|null, fallback_reason?: string|null },
  *   changedFiles: string[],
  *   mutationProbe?: { status: string, total: number, survived: number, score: number|null, mutants: Array<{ file: string, line: number, operator: string, killed: boolean }> }|null,
+ *   diffText?: string,
+ *   testPatterns?: string[],
  * }} input
- * @returns {{ level: 'strong'|'moderate'|'weak'|'not_applicable', signals: Array<{ code: string, weight: string, detail: string, human_check: string }>, changed_source_files: string[], reaching_tests: string[] }}
+ * @returns {{ level: 'strong'|'moderate'|'weak'|'not_applicable', signals: Array<{ code: string, weight: string, detail: string, human_check: string, refs?: string[] }>, changed_source_files: string[], reaching_tests: string[] }}
  */
 export function assessEvidenceStrength(input) {
   const changeKind = input.contract?.change_kind ?? 'feature';
   const testFiles = new Set(input.impact?.test_candidates ?? []);
   const changedFiles = input.changedFiles ?? [];
-  const changedSource = changedFiles.filter((f) => !testFiles.has(f) && !DOC_FILE_PATTERN.test(f));
   const reachingTests = (input.impact?.selected_tests ?? []).map((t) => t.file);
 
-  if (NON_BEHAVIORAL_KINDS.has(changeKind) || changedSource.length === 0) {
+  // Weakened tests matter for every kind of change, including one that touches no source file:
+  // "only the tests changed" is exactly what switching off a failing test looks like.
+  const weakening = detectTestWeakening({ diffText: input.diffText, testFiles: [...testFiles], testPatterns: input.testPatterns });
+  const weakeningRefs = {
+    TEST_FILE_DELETED: weakening.deleted_test_files,
+    TEST_SKIP_ADDED: [...new Set(weakening.skip_markers.map((m) => m.file))],
+    ASSERTIONS_REMOVED: weakening.assertion_drops.map((d) => d.file),
+  };
+  // A deleted test file is no longer a test candidate, but it is not changed source either.
+  const deletedTests = new Set(weakening.deleted_test_files);
+  const changedSource = changedFiles.filter((f) => !testFiles.has(f) && !deletedTests.has(f) && !DOC_FILE_PATTERN.test(f));
+  const weakeningCodes = Object.keys(weakeningRefs).filter((code) => weakeningRefs[code].length > 0);
+  const behavioural = !NON_BEHAVIORAL_KINDS.has(changeKind) && changedSource.length > 0;
+
+  if (!behavioural && weakeningCodes.length === 0) {
     return { level: 'not_applicable', signals: [], changed_source_files: changedSource, reaching_tests: reachingTests };
   }
 
@@ -70,7 +102,9 @@ export function assessEvidenceStrength(input) {
   const executed = (input.checks ?? []).filter((c) => EXECUTED_STATUSES.has(c.status));
   const passing = executed.filter((c) => c.status === 'PASS');
 
-  if (passing.length === 0) {
+  if (!behavioural) {
+    // Only the weakening signals apply; reach and tailoring are about changed source.
+  } else if (passing.length === 0) {
     codes.push('NO_EXECUTED_PASSING_CHECK');
   } else if (executed.length === 1 && executed[0].kind === 'test') {
     codes.push('SINGLE_GENERIC_CHECK');
@@ -78,12 +112,12 @@ export function assessEvidenceStrength(input) {
 
   // Reach is conclusive when the graph ran: either it found reaching tests, or it found none
   // (`NO_TEST_MATCHED` is the analyzer saying exactly that before falling back to the full suite).
-  if (reachingTests.length === 0) {
+  if (behavioural && reachingTests.length === 0) {
     const graphConclusive = !input.impact?.fallback_to_full || input.impact?.fallback_code === 'NO_TEST_MATCHED';
     codes.push(graphConclusive ? 'NO_TEST_REACHES_CHANGE' : 'IMPACT_INCONCLUSIVE');
   }
 
-  const behaviourChange = changeKind === 'feature' || changeKind === 'bugfix';
+  const behaviourChange = behavioural && (changeKind === 'feature' || changeKind === 'bugfix');
   if (behaviourChange && !changedFiles.some((f) => testFiles.has(f))) {
     codes.push('NO_TEST_CHANGED');
   }
@@ -92,8 +126,13 @@ export function assessEvidenceStrength(input) {
   if (probe?.status === 'PROBED' && probe.survived > 0) {
     codes.push('MUTANTS_SURVIVED');
   }
+  codes.push(...weakeningCodes);
 
-  const signals = codes.map((code) => ({ code, ...SIGNAL_DEFS[code] }));
+  const signals = codes.map((code) => ({
+    code,
+    ...SIGNAL_DEFS[code],
+    ...(weakeningRefs[code] ? { detail: `${SIGNAL_DEFS[code].detail} Files: ${weakeningRefs[code].join(', ')}.`, refs: weakeningRefs[code] } : {}),
+  }));
   const survivedSignal = signals.find((s) => s.code === 'MUTANTS_SURVIVED');
   if (survivedSignal) {
     // Most mutants surviving means the checks barely constrain the change.

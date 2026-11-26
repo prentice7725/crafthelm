@@ -42,7 +42,12 @@ export function resolveClaudeSettingsPath(options = {}) {
   return path.join(options.homeDir ?? os.homedir(), '.claude', 'settings.json');
 }
 
-function readSettings(settingsPath) {
+/**
+ * Read one Claude settings file without throwing: a missing, unreadable or invalid file is reported.
+ * @param {string} settingsPath
+ * @returns {{ exists: boolean, data: object|null, error: string|null }}
+ */
+export function readClaudeSettings(settingsPath) {
   if (!fs.existsSync(settingsPath)) return { exists: false, data: null, error: null };
   let raw;
   try {
@@ -78,7 +83,7 @@ export function inspectClaudePermissionGuards(options = {}) {
   const present = { deny: new Set(), ask: new Set() };
   const files = [];
   for (const p of candidates) {
-    const { exists, data, error } = readSettings(p);
+    const { exists, data, error } = readClaudeSettings(p);
     files.push({ path: p, exists, error });
     for (const kind of ['deny', 'ask']) {
       for (const rule of data?.permissions?.[kind] ?? []) present[kind].add(rule);
@@ -102,7 +107,7 @@ export function inspectClaudePermissionGuards(options = {}) {
 export function applyClaudePermissionGuards(options) {
   const settingsPath = path.resolve(options.settingsPath);
   const guards = getClaudeGuardRules();
-  const { data, error } = readSettings(settingsPath);
+  const { data, error } = readClaudeSettings(settingsPath);
   if (error) {
     return { settings_path: settingsPath, action: 'SKIPPED_INVALID', added: { deny: [], ask: [] }, reason: error };
   }

@@ -6,6 +6,7 @@ import { assessEvidenceStrength } from './lib/evidence-strength.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { evaluateLiteProfile, isLiteContract } from './lib/lite-profile.mjs';
 import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
+import { redactSecrets, storeCommandOutput, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { runShellCommand } from './lib/exec.mjs';
 import {
   computeSnapshotDigest,
@@ -34,15 +35,13 @@ import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-o
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
 import { extractCommandTargets } from './lib/test-runners.mjs';
+import { assertNoForeignWriterLock } from './lib/writer-lock.mjs';
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function writeJson(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-}
+const writeJson = writeJsonAtomic;
 
 function loadProtectedPolicy(repoRoot, contract, checkpoint, options) {
   const baseRef = contract.verification_policy?.policy_base_ref ?? checkpoint.baseline_git_head;
@@ -175,7 +174,13 @@ function evaluateDifferential(ac, cmdResult, repoRoot) {
     return { passed: true, diffs: [] };
   }
 
-  const allowedPatterns = (ac.allowed_diffs ?? []).map((pat) => new RegExp(pat));
+  let allowedPatterns;
+  try {
+    allowedPatterns = (ac.allowed_diffs ?? []).map((pat) => new RegExp(pat));
+  } catch (err) {
+    // A pattern that does not compile approves nothing: report it as a failed check, not a crash.
+    return { passed: false, reason: `allowed_diffs has an invalid regular expression: ${err.message}`, diffs: [{ type: 'allowed_diffs_error', detail: err.message }] };
+  }
   const diffs = [];
 
   try {
@@ -319,6 +324,7 @@ export function recordRedEvidence(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const acId = options.acId;
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'record RED evidence for');
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
   const contract = readJson(options.contract ? path.resolve(options.contract) : getContractPath(repoRoot, checkpoint.task_id));
@@ -334,8 +340,8 @@ export function recordRedEvidence(options) {
   fs.mkdirSync(testsDir, { recursive: true });
   const stdoutRel = `evidence/tests/${acId}.red.stdout.txt`;
   const stderrRel = `evidence/tests/${acId}.red.stderr.txt`;
-  fs.writeFileSync(path.join(getRunDir(repoRoot, runId), stdoutRel), res.stdout, 'utf8');
-  fs.writeFileSync(path.join(getRunDir(repoRoot, runId), stderrRel), res.stderr, 'utf8');
+  storeCommandOutput(getRunDir(repoRoot, runId), stdoutRel, res.stdout);
+  storeCommandOutput(getRunDir(repoRoot, runId), stderrRel, res.stderr);
 
   if (res.exitCode === expectedExit) {
     return {
@@ -367,6 +373,7 @@ export function recordBaselineGreen(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const acId = options.acId;
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'record baseline evidence for');
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
   const contract = readJson(options.contract ? path.resolve(options.contract) : getContractPath(repoRoot, checkpoint.task_id));
@@ -382,8 +389,8 @@ export function recordBaselineGreen(options) {
   fs.mkdirSync(testsDir, { recursive: true });
   const stdoutRel = `evidence/tests/${acId}.baseline.stdout.txt`;
   const stderrRel = `evidence/tests/${acId}.baseline.stderr.txt`;
-  fs.writeFileSync(path.join(getRunDir(repoRoot, runId), stdoutRel), res.stdout, 'utf8');
-  fs.writeFileSync(path.join(getRunDir(repoRoot, runId), stderrRel), res.stderr, 'utf8');
+  storeCommandOutput(getRunDir(repoRoot, runId), stdoutRel, res.stdout);
+  storeCommandOutput(getRunDir(repoRoot, runId), stderrRel, res.stderr);
 
   if (res.exitCode !== expectedExit) {
     return {
@@ -415,6 +422,7 @@ export function runVerify(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const runDir = getRunDir(repoRoot, runId);
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'verify');
   // A probe killed mid-mutation leaves a mutated source and a journal. Restore it before anything
   // reads the tree: the snapshot, the checks and the probe itself must all see the original bytes.
   const recovered = recoverInterruptedProbe(repoRoot, path.join(runDir, 'evidence'));
@@ -560,11 +568,13 @@ export function runVerify(options) {
     if (options.progress) {
       process.stderr.write(`[verify] Running ${ac.id} (${ac.kind}): ${ac.command}\n`);
     }
+    const startedAt = new Date().toISOString();
     const res = runShellCommand(ac.command, { cwd: repoRoot });
     const stdoutRel = `evidence/tests/${ac.id}.stdout.txt`;
     const stderrRel = `evidence/tests/${ac.id}.stderr.txt`;
-    fs.writeFileSync(path.join(runDir, stdoutRel), res.stdout, 'utf8');
-    fs.writeFileSync(path.join(runDir, stderrRel), res.stderr, 'utf8');
+    const storedOut = storeCommandOutput(runDir, stdoutRel, res.stdout);
+    const storedErr = storeCommandOutput(runDir, stderrRel, res.stderr);
+    const redactions = storedOut.redactions + storedErr.redactions;
 
     const expectedExit = ac.expected_exit_code ?? 0;
     let status = res.exitCode === expectedExit ? 'PASS' : 'FAIL';
@@ -627,8 +637,12 @@ export function runVerify(options) {
       status,
       reason,
       duration_ms: res.durationMs,
+      started_at: startedAt,
       stdout_file: stdoutRel,
       stderr_file: stderrRel,
+      stdout_sha256: storedOut.sha256,
+      stderr_sha256: storedErr.sha256,
+      ...(redactions > 0 ? { redactions } : {}),
       ...(selectiveRequested ? { selection_reason: selection.reason } : {}),
       ...(counterexampleFile ? { counterexample_file: counterexampleFile, seed } : {}),
       ...(diffReportFile ? { diff_report_file: diffReportFile } : {}),
@@ -691,8 +705,8 @@ export function runVerify(options) {
       severity: rule.severity,
       exit_code: ruleRes.exitCode,
       status: ruleStatus,
-      stdout: ruleRes.stdout,
-      stderr: ruleRes.stderr,
+      stdout: redactSecrets(ruleRes.stdout).text,
+      stderr: redactSecrets(ruleRes.stderr).text,
     });
 
     if (!passed && rule.policy_mode === 'enforce' && rule.severity === 'must_fix') {
@@ -775,7 +789,15 @@ export function runVerify(options) {
     writeJson(path.join(runDir, mutationProbeRel), mutationProbe);
   }
 
-  const evidenceStrength = assessEvidenceStrength({ contract, checks, impact, changedFiles, mutationProbe });
+  const evidenceStrength = assessEvidenceStrength({
+    contract,
+    checks,
+    impact,
+    changedFiles,
+    mutationProbe,
+    diffText,
+    testPatterns: contract.verification_policy?.test_file_patterns,
+  });
 
   // Lite profile: the E2E requirement is waived only while the real diff stays small and well-tested.
   // The strength already includes the mutation probe, so weak probe results revoke the exemption.
@@ -1065,7 +1087,7 @@ function printUsage() {
       'CraftHelm Verification CLI (Execute AC Checks, E2E/Property/Diff, Reliability Rules)',
       '',
       'Usage:',
-      '  verify.mjs --repo <path> --run-id <id> [--contract <path>] [--selective] [--review-file <path>] [--policy-dir <dir>] [--quiet]',
+      '  verify.mjs --repo <path> --run-id <id> [--contract <path>] [--selective] [--review-file <path>] [--policy-dir <dir>] [--writer <id>] [--quiet]',
       '  verify.mjs --repo <path> --run-id <id> --record-red <ac-id> [--contract <path>]',
       '  verify.mjs --repo <path> --run-id <id> --record-baseline-green <ac-id> [--contract <path>]',
       '',
@@ -1088,6 +1110,7 @@ if (isMainModule(import.meta.url)) {
         runId: args['run-id'],
         acId: args['record-red'],
         contract: args.contract,
+        writer: typeof args.writer === 'string' ? args.writer : undefined,
       });
     } else if (args['record-baseline-green']) {
       res = recordBaselineGreen({
@@ -1095,12 +1118,14 @@ if (isMainModule(import.meta.url)) {
         runId: args['run-id'],
         acId: args['record-baseline-green'],
         contract: args.contract,
+        writer: typeof args.writer === 'string' ? args.writer : undefined,
       });
     } else {
       res = runVerify({
         repo: args.repo,
         runId: args['run-id'],
         contract: args.contract,
+        writer: typeof args.writer === 'string' ? args.writer : undefined,
         reviewFile: args['review-file'],
         policyDir: args['policy-dir'],
         selective: Boolean(args.selective),

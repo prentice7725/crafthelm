@@ -145,7 +145,7 @@ describe('Batch 1 CLI Safety, Task Isolation, E2E Readiness & Timeout Separation
     }
   });
 
-  it('handles --help and -h without creating any files across top-level and all 15 subcommands', () => {
+  it('handles --help and -h without creating any files across top-level and every subcommand', () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-help-home-'));
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-help-cwd-'));
     const env = {

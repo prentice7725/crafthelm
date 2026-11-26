@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
+import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest, getChangedFiles, getGitHead, isGitRepo } from './lib/git.mjs';
 import { buildHandoffPacket } from './lib/handoff.mjs';
+import { evaluateDecisionIdentity, loadApproversPolicy } from './lib/human-gate.mjs';
 import { INTERVIEW_DOCS, withArtifactLock, writeAtomic } from './lib/task-artifacts.mjs';
 import { STANDARD_STAGES } from './lib/methodology.mjs';
 import {
@@ -19,15 +21,13 @@ import {
 } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES, WATERFALL_GATED_STAGES, assertTransition } from './lib/state-machine.mjs';
+import { assertNoForeignWriterLock, describeLockRelease, readWriterLock } from './lib/writer-lock.mjs';
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function writeJson(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-}
+const writeJson = writeJsonAtomic;
 
 function computeFileMapHashes(repoRoot, patterns) {
   const result = {};
@@ -243,7 +243,7 @@ export function acquireWriterLock(options) {
       return {
         ok: false,
         error_code: 'CONCURRENT_WRITER_BLOCKED',
-        message: `Active writer lock held by "${existing.writer_id ?? 'unknown'}"`,
+        message: `Active writer lock held by "${existing.writer_id ?? 'unknown'}"${existing.acquired_at ? ` since ${existing.acquired_at}` : ''}. If it was left behind, clear it with: ${describeLockRelease(runId)}`,
         lock: existing,
       };
     }
@@ -281,6 +281,7 @@ export function recordStage(options) {
   if (!STANDARD_STAGES.includes(stage)) {
     throw new Error(`Unknown stage "${stage}"`);
   }
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'record a stage for');
 
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
@@ -357,6 +358,7 @@ export function transitionCheckpoint(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const toState = options.to;
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'change the state of');
   const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
   const { contract } = loadContractForRun(repoRoot, checkpoint.task_id, options.contract);
 
@@ -387,6 +389,7 @@ export function recordRepairRound(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const causeId = options.cause ?? 'default_cause';
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'record a repair round for');
   const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
   const { contract } = loadContractForRun(repoRoot, checkpoint.task_id, options.contract);
 
@@ -492,14 +495,13 @@ export function resumeRun(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const runDir = getRunDir(repoRoot, runId);
-  const lockPath = path.join(runDir, 'writer.lock.json');
+  const lock = readWriterLock(repoRoot, runId);
 
-  if (fs.existsSync(lockPath)) {
-    const lock = readJson(lockPath);
+  if (lock && !(options.writer && lock.writer_id === options.writer)) {
     return {
       ok: false,
       error_code: 'CONCURRENT_WRITER_BLOCKED',
-      message: `Cannot resume while active writer lock exists (${lock.writer_id ?? 'unknown'})`,
+      message: `Cannot resume while active writer lock exists (${lock.writer_id ?? 'unknown'}). If it was left behind, clear it with: ${describeLockRelease(runId)}`,
     };
   }
 
@@ -573,6 +575,9 @@ export function resumeRun(options) {
       if (manifest.human_review?.package_sha256 !== reportSha) {
         staleReasons.push('review-package.md digest differs from evidence manifest');
       }
+      for (const altered of findAlteredEvidenceLogs(runDir, manifest)) {
+        staleReasons.push(`evidence log altered since verification: ${altered}`);
+      }
       if (checkpoint.state === STATES.ACCEPTED) {
         if (!fs.existsSync(decisionPath)) {
           staleReasons.push('approvals/decision.json missing for ACCEPTED state');
@@ -584,6 +589,16 @@ export function resumeRun(options) {
             decision.evidence_manifest_sha256 !== sha256File(manifestPath)
           ) {
             staleReasons.push('human approval decision digests no longer match current artifacts');
+          }
+          // The same identity rule approve verify applies: a decision that no longer satisfies the
+          // protected approvers policy is not restored as ACCEPTED.
+          const policyBaseRef = contract.verification_policy?.policy_base_ref ?? checkpoint.baseline_git_head;
+          const approversPolicy = loadApproversPolicy(repoRoot, policyBaseRef);
+          const identity = evaluateDecisionIdentity(decision, approversPolicy);
+          if (identity.identity === 'SIGNATURE_INVALID') {
+            staleReasons.push(`human approval signature invalid: ${identity.detail}`);
+          } else if (approversPolicy.require_signed && identity.identity !== 'SIGNATURE_TRUSTED') {
+            staleReasons.push(`protected approvers policy requires a trusted signature: ${identity.detail}`);
           }
         }
       }
@@ -644,6 +659,7 @@ export function createHandoff(options) {
 export function replanRun(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'replan');
   const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
   const { contract, contractSha256 } = loadContractForRun(repoRoot, checkpoint.task_id, options.contract);
 
@@ -732,13 +748,13 @@ if (isMainModule(import.meta.url)) {
     if (sub === 'init') out = initCheckpoint({ repo: args.repo, contract: args.contract, runId: args['run-id'], docsDir: args['docs-dir'] });
     else if (sub === 'acquire-lock') out = acquireWriterLock({ repo: args.repo, runId: args['run-id'], writer: args.writer });
     else if (sub === 'release-lock') out = releaseWriterLock({ repo: args.repo, runId: args['run-id'], writer: args.writer, force: Boolean(args.force) });
-    else if (sub === 'stage') out = recordStage({ repo: args.repo, runId: args['run-id'], stage: args.stage ?? args._[1], status: args.status, contract: args.contract });
+    else if (sub === 'stage') out = recordStage({ repo: args.repo, runId: args['run-id'], stage: args.stage ?? args._[1], status: args.status, contract: args.contract, writer: args.writer });
     else if (sub === 'approve-stage') out = approveStage({ repo: args.repo, runId: args['run-id'], stage: args.stage ?? args._[1], actor: args.actor, rationale: args.rationale });
-    else if (sub === 'transition') out = transitionCheckpoint({ repo: args.repo, runId: args['run-id'], to: args.to, reason: args.reason, contract: args.contract });
-    else if (sub === 'record-repair') out = recordRepairRound({ repo: args.repo, runId: args['run-id'], cause: args.cause, check: args.check, command: args.command, note: args.note, contract: args.contract });
-    else if (sub === 'resume') out = resumeRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, docsDir: args['docs-dir'] });
+    else if (sub === 'transition') out = transitionCheckpoint({ repo: args.repo, runId: args['run-id'], to: args.to, reason: args.reason, contract: args.contract, writer: args.writer });
+    else if (sub === 'record-repair') out = recordRepairRound({ repo: args.repo, runId: args['run-id'], cause: args.cause, check: args.check, command: args.command, note: args.note, contract: args.contract, writer: args.writer });
+    else if (sub === 'resume') out = resumeRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, docsDir: args['docs-dir'], writer: args.writer });
     else if (sub === 'handoff') out = createHandoff({ repo: args.repo, runId: args['run-id'], docsDir: args['docs-dir'] });
-    else if (sub === 'replan') out = replanRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, reason: args.reason });
+    else if (sub === 'replan') out = replanRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, reason: args.reason, writer: args.writer });
     else if (sub === 'status' || sub === 'audit') out = statusCheckpoint({ repo: args.repo, runId: args['run-id'] });
     else throw new Error('Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|status|audit> ...');
 

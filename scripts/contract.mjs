@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
-import { getContractPath } from './lib/paths.mjs';
+import { getContractPath, unsupportedGlobSyntax } from './lib/paths.mjs';
 import { readTaskReceipt, withTaskWrite, writeAtomic, writeTaskReceipt } from './lib/task-artifacts.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
 import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } from './lib/lite-profile.mjs';
@@ -62,6 +62,34 @@ export function checkContractReadiness(contract) {
         message: 'A lite contract without E2E needs an executed test written for this change (kind unit, fast, property or differential, with a command other than the umbrella test command); a single umbrella test command is weak evidence, and verify will revoke the exemption (SINGLE_GENERIC_CHECK).',
         guidance: 'Add the command that runs the test for the changed code: contract add-test <contract> --test-cmd "<command>" (or pass --test-cmd to start).',
       });
+    }
+  }
+
+  for (const ac of Array.isArray(contract?.acceptance) ? contract.acceptance : []) {
+    for (const pattern of ac?.allowed_diffs ?? []) {
+      try {
+        new RegExp(pattern);
+      } catch (err) {
+        warnings.push({
+          code: 'ALLOWED_DIFFS_INVALID_REGEX',
+          message: `acceptance ${ac.id} allowed_diffs pattern "${pattern}" is not a valid regular expression (${err.message}); verify would fail that check.`,
+          guidance: 'Fix the pattern, escaping characters that are meant literally.',
+        });
+      }
+    }
+  }
+
+  // An unsupported pattern is matched literally and so matches nothing; in scope.protect that fails open.
+  for (const list of ['allow', 'protect']) {
+    for (const pattern of contract?.scope?.[list] ?? []) {
+      const unsupported = unsupportedGlobSyntax(pattern);
+      if (unsupported) {
+        warnings.push({
+          code: 'SCOPE_GLOB_UNSUPPORTED',
+          message: `scope.${list} pattern "${pattern}" uses ${unsupported}, which CraftHelm globs do not support; it would match no file${list === 'protect' ? ' and protect nothing' : ''}.`,
+          guidance: 'Use only **, * and ? (or a trailing "/" for a directory), and list each alternative as its own pattern.',
+        });
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
+import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest } from './lib/git.mjs';
 import {
   VERIFICATION_TYPES,
@@ -20,6 +21,7 @@ import {
   getContractPath,
   getEvidenceManifestPath,
   getReviewPackagePath,
+  getRunDir,
   getVerificationStampPath,
 } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
@@ -29,10 +31,7 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function writeJson(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-}
+const writeJson = writeJsonAtomic;
 
 const DECISION_MAP = {
   accept: 'accepted',
@@ -101,6 +100,10 @@ export function recordHumanDecision(options) {
   }
   if (contractSha !== checkpoint.contract_sha256) {
     throw new Error('CONTRACT_MISMATCH: execution contract changed without replan.');
+  }
+  const alteredLogs = findAlteredEvidenceLogs(getRunDir(repoRoot, runId), manifest);
+  if (alteredLogs.length > 0) {
+    throw new Error(`EVIDENCE_LOG_ALTERED: ${alteredLogs.join('; ')}. Re-run verify and re-publish before approving.`);
   }
 
   // Identity gate: evaluated before any artifact is mutated.
@@ -245,6 +248,11 @@ export function verifyHumanDecision(options) {
   }
   if (!fs.existsSync(manifestPath) || sha256File(manifestPath) !== decision.evidence_manifest_sha256) {
     mismatches.push('evidence_manifest_sha256 changed after decision');
+  } else {
+    // The manifest is intact, so the log hashes in it are the ones the decision was made on.
+    for (const altered of findAlteredEvidenceLogs(getRunDir(repoRoot, runId), readJson(manifestPath))) {
+      mismatches.push(`evidence log altered after decision: ${altered}`);
+    }
   }
 
   // Identity: a broken signature, or a missing/untrusted one under `require_signed`, invalidates the decision.

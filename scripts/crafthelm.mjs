@@ -23,6 +23,20 @@ export function resolveCommandTimeoutMs(subcommand, env = process.env) {
   return LONG_RUNNING_COMMANDS.has(subcommand) ? 0 : DEFAULT_CLI_TIMEOUT_MS;
 }
 
+export const MIN_NODE_MAJOR = 24;
+
+/**
+ * Explain an unsupported Node.js runtime in one line instead of letting a subcommand die on a
+ * missing built-in (`node:sqlite` and friends). Returns null when the runtime is new enough.
+ * @param {string} [version]
+ * @returns {string|null}
+ */
+export function describeUnsupportedNode(version = process.versions.node) {
+  const major = Number(String(version).split('.')[0]);
+  if (Number.isInteger(major) && major >= MIN_NODE_MAJOR) return null;
+  return `CraftHelm needs Node.js ${MIN_NODE_MAJOR} or newer; this is ${version}. Install it (for example "nvm install ${MIN_NODE_MAJOR}") and run the command again.`;
+}
+
 const SUBCOMMANDS = new Map([
   ['start', 'scripts/start.mjs'],
   ['status', 'scripts/status.mjs'],
@@ -78,6 +92,11 @@ function printHelp() {
 }
 
 if (isMainModule(import.meta.url)) {
+  const unsupportedNode = describeUnsupportedNode();
+  if (unsupportedNode) {
+    process.stderr.write(`${unsupportedNode}\n`);
+    process.exit(1);
+  }
   const args = process.argv.slice(2);
   const sub = args[0];
 

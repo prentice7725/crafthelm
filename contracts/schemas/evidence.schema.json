@@ -46,8 +46,12 @@
           "reason": { "type": "string" },
           "selection_reason": { "type": "string" },
           "duration_ms": { "type": "integer", "minimum": 0 },
+          "started_at": { "type": "string", "minLength": 1 },
           "stdout_file": { "type": "string" },
           "stderr_file": { "type": "string" },
+          "stdout_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "stderr_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "redactions": { "type": "integer", "minimum": 0 },
           "counterexample_file": { "type": "string" },
           "seed": { "type": ["string", "number", "null"] },
           "diff_report_file": { "type": "string" }
@@ -117,12 +121,16 @@
                   "SINGLE_GENERIC_CHECK",
                   "NO_TEST_CHANGED",
                   "MUTANTS_SURVIVED",
-                  "IMPACT_INCONCLUSIVE"
+                  "IMPACT_INCONCLUSIVE",
+                  "TEST_FILE_DELETED",
+                  "TEST_SKIP_ADDED",
+                  "ASSERTIONS_REMOVED"
                 ]
               },
               "weight": { "type": "string", "enum": ["weak", "moderate"] },
               "detail": { "type": "string", "minLength": 1 },
-              "human_check": { "type": "string", "minLength": 1 }
+              "human_check": { "type": "string", "minLength": 1 },
+              "refs": { "type": "array", "items": { "type": "string" } }
             }
           }
         },
