@@ -2,10 +2,10 @@
 
 ## 책임 분리
 
-- **자동 검사 PASS ≠ 인간 인수 승인.**
-- `READY_FOR_HUMAN_REVIEW`는 검토 패키지 생성·Kouetsu 교열·증거 해시 고정이 완료된 상태일 뿐 완료(`ACCEPTED`)가 아니다.
-- `approvals/decision.json`은 오직 `scripts/approval.mjs record`를 통한 명시적 사용자 입력으로만 생성된다.
-- `actor`는 사용자 입력 문자열이다. 신원을 얼마나 확인했는지는 `verification_type`에 등급으로 남긴다.
+- 자동 검사가 모두 `PASS`여도 사람의 인수 승인(`ACCEPTED`)으로 보지 않는다.
+- `READY_FOR_HUMAN_REVIEW`는 검토 패키지 생성, Kouetsu 교열, 증거 해시 고정이 끝난 대기 상태일 뿐 완료(`ACCEPTED`)가 아니다.
+- `approvals/decision.json`은 `scripts/approval.mjs record`로 사람이 직접 결정을 입력할 때만 생성한다.
+- `actor`는 호출자가 입력한 문자열이므로, 신원을 얼마나 검증했는지는 `verification_type` 등급으로 분리해 남긴다.
 
 ## 승인 게이트와 신원 등급
 
@@ -28,7 +28,7 @@
 - 에이전트 트리에서 떨어져 나간 프로세스(데몬, 예약 작업, 원격 셸)에서 실행하는 경우. 부모 체인에 에이전트가 보이지 않는다.
 - `recordHumanDecision`을 직접 호출하거나 `approvals/decision.json`을 직접 쓰는 경우. 같은 권한으로 도는 코드는 등급 필드까지 꾸며 쓸 수 있다.
 
-서명이 없는 결정은 이렇게 꾸밀 수 있다고 보아야 한다. 에이전트가 꾸밀 수 없는 보장이 필요하면 아래 승인자 정책을 쓰고, 개인키를 에이전트가 읽을 수 없는 곳에 둔다.
+서명이 없는 결정은 이렇게 꾸밀 수 있다. 에이전트가 꾸밀 수 없는 보장이 필요하면 아래 승인자 정책을 쓰고, 개인키를 에이전트가 읽을 수 없는 곳에 둔다.
 
 ## 승인자 정책 (`.crafthelm/approvers.json`)
 
@@ -52,4 +52,4 @@
 
 ## 승인 무효화 규칙
 
-승인 이후 `target_snapshot_digest`, `contract_sha256`, `evidence_manifest_sha256`, `report_sha256` 중 하나라도 달라지면 기존 승인 효력은 즉시 무효화되며(`INVALIDATED`) 재검토가 필요하다.
+승인 뒤에 `target_snapshot_digest`, `contract_sha256`, `evidence_manifest_sha256`, `report_sha256` 중 하나라도 달라지거나, 매니페스트에 기록된 증거 로그가 변조되거나, 결정 서명이 깨지거나 보호된 승인자 정책(`require_signed: true`)의 신뢰 서명 조건을 잃으면 `approval.mjs verify`가 기존 승인 효력을 즉시 무효(`INVALIDATED`)로 판정한다. 이 경우 다시 검증해 검토 보고서를 발행하고 승인을 새로 받아야 한다.
