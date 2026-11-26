@@ -12,20 +12,33 @@ import { STATES } from './state-machine.mjs';
  * hook before their file tools run (Claude Code `PreToolUse`). It imports nothing heavy: it runs
  * on every edit.
  *
+ * Two things are closed whether or not a run is active: the run directories, apart from the files
+ * an agent is meant to author there, and the files that decide what the agent may do (contracts and
+ * the Claude settings that hold the permission rules and this hook).
+ *
  * It is a seatbelt, not the control. It sees the host's file tools only, not a shell redirect or a
  * script that writes files, and a broken guard allows the write. `verify` remains the check that counts.
  */
 
 const ENDED_STATES = new Set([STATES.ACCEPTED, STATES.REJECTED, STATES.CLOSED_UNACCEPTED, STATES.ABORTED]);
 
-// Written by CraftHelm scripts only. An agent editing these is editing its own evidence or approval.
-const SCRIPT_OWNED_RUN_FILES = [
-  'approvals/**',
-  'checkpoint.json',
-  'evidence-manifest.json',
-  'evidence/verification-stamp.json',
-  'evidence/tests/**',
-  'evidence/rules/**',
+// A run directory is written by CraftHelm scripts: checkpoint, evidence, delegation records, reports,
+// approvals. An agent editing those is editing its own evidence or approval, so the directory is
+// closed by default and only the files an agent is meant to author are listed here.
+const AGENT_AUTHORED_RUN_FILES = [
+  // The advisory reviewer's findings, read by verify.
+  'evidence/review.json',
+  // Hand-over files for a script to read: a worker result packet for `delegate record`, a report draft.
+  'inbox/**',
+];
+
+// Files that decide what an agent may do. They stay closed to file tools whether or not a run is
+// active: a contract is approved through `contract approve` (which Claude Code asks a person about),
+// and the settings files hold the permission rules and this hook itself.
+const CONTROL_FILES = [
+  '.crafthelm/contracts/**',
+  '.claude/settings.json',
+  '.claude/settings.local.json',
 ];
 
 function readJsonSafe(filePath) {
@@ -96,13 +109,19 @@ export function evaluateWrite(params) {
 
   const runFile = /^\.crafthelm\/runs\/([^/]+)\/(.+)$/.exec(rel);
   if (runFile) {
-    if (matchesAnyGlob(runFile[2], SCRIPT_OWNED_RUN_FILES)) {
-      return deny(
-        'SCRIPT_OWNED_ARTIFACT',
-        `${rel} is written only by CraftHelm scripts (verify, checkpoint, approve). Run the script instead of editing its output; a human acceptance record is never written by an agent.`,
-      );
+    if (matchesAnyGlob(runFile[2], AGENT_AUTHORED_RUN_FILES)) {
+      return allow('RUN_WORKSPACE', 'run directory file an agent is meant to author');
     }
-    return allow('RUN_WORKSPACE', 'run directory file that is not script-owned');
+    return deny(
+      'SCRIPT_OWNED_ARTIFACT',
+      `${rel} is written only by CraftHelm scripts (verify, checkpoint, delegate, review-package, approve). Run the script instead of editing its output; a human acceptance record is never written by an agent.`,
+    );
+  }
+  if (matchesAnyGlob(rel, CONTROL_FILES)) {
+    return deny(
+      'CONTROL_FILE',
+      `${rel} decides what this session may do, so file tools do not write it. Change a contract through the contract commands (contract add-e2e, add-test, approve) or a new interview; settings are edited by a person.`,
+    );
   }
 
   const scopes = listActiveScopes(repoRoot);

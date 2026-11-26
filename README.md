@@ -56,6 +56,7 @@ CraftHelm은 **단일 AI 공급자·단일 AI 호스트(Claude Code, Codex, Anti
 | 실행하지 않은 테스트를 통과했다고 보고 | `verify`가 계약의 명령을 직접 실행 | 종료 코드가 다르면 `AC_FAILED` |
 | 계약에 없는 파일을 함께 수정 | `scope.allow`·`scope.protect`와 diff 대조. Claude Code에서는 범위 가드 훅이 쓰기 전에 차단 | `SCOPE_VIOLATION`, `PROTECTED_PATH_VIOLATION` |
 | 증거 파일이나 승인 레코드를 직접 작성 | 범위 가드 훅 (Claude Code) | 파일 도구 호출이 차단됨 (`SCRIPT_OWNED_ARTIFACT`) |
+| 계약의 승인 필드나 Claude 설정을 직접 수정 | 범위 가드 훅 (Claude Code), 실행이 없을 때도 적용 | 파일 도구 호출이 차단됨 (`CONTROL_FILE`) |
 | 검증 규칙이나 계약을 고쳐서 통과 | 정책은 `policy_base_ref`에서 읽고 계약은 해시로 고정 | 변조 탐지, `CONTRACT_HASH_MISMATCH` |
 | 실패하는 테스트를 끄거나 지워서 통과 | 테스트 파일 diff | 증거 강도 `weak` (`TEST_FILE_DELETED`, `TEST_SKIP_ADDED`, `ASSERTIONS_REMOVED`) |
 | 변경을 건드리지 않는 테스트만 통과 | 영향도 분석, 뮤테이션 검사 | 증거 강도 `weak` (`NO_TEST_REACHES_CHANGE`, `MUTANTS_SURVIVED`) |

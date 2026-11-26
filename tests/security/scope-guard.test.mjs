@@ -81,9 +81,11 @@ describe('Scope guard: the contract scope applied before the write', () => {
       const outside = at('migrations/001.sql');
       assert.deepEqual([outside.decision, outside.code], ['deny', 'OUT_OF_SCOPE']);
       assert.match(outside.reason, /migrations\/001\.sql is outside scope\.allow \(src\/\*\*\) of the active run GUARD-RUN/);
-      // The contract itself and the Claude settings that register the guard are outside the scope too.
-      assert.equal(at('.crafthelm/contracts/GUARD.json').code, 'OUT_OF_SCOPE');
-      assert.equal(at('.claude/settings.json').code, 'OUT_OF_SCOPE');
+      // The contract and the Claude settings that hold the guard are closed to file tools outright.
+      assert.equal(at('.crafthelm/contracts/GUARD.json').code, 'CONTROL_FILE');
+      assert.equal(at('.claude/settings.json').code, 'CONTROL_FILE');
+      assert.equal(at('.claude/settings.local.json').code, 'CONTROL_FILE');
+      assert.equal(at('.claude/skills/crafthelm/SKILL.md').code, 'OUT_OF_SCOPE');
       // git does not track it, so verify would not see it either.
       assert.equal(at('scratch/notes.txt').code, 'GIT_IGNORED');
       // Relative paths resolve against the session directory; a path outside any CraftHelm repo is not ours.
@@ -99,18 +101,28 @@ describe('Scope guard: the contract scope applied before the write', () => {
     try {
       startRun(repo, 'OWN', 'OWN-RUN', { allow: ['src/**'], protect: [] });
       const at = (rel) => evaluateWrite({ filePath: path.join(repo, rel) });
-      for (const rel of ['approvals/decision.json', 'checkpoint.json', 'evidence-manifest.json', 'evidence/verification-stamp.json', 'evidence/tests/AC-01.stdout.txt']) {
+      const scriptOwned = [
+        'approvals/decision.json', 'checkpoint.json', 'evidence-manifest.json', 'evidence/verification-stamp.json', 'evidence/tests/AC-01.stdout.txt',
+        // Closed by default: delegation records, probe and impact results, reports, the writer lock.
+        'delegations/D001.json', 'evidence/mutation-probe.json', 'evidence/impact-analysis.json', 'evidence/changes.patch',
+        'reports/editorial-report.json', 'reports/review-package.md', 'writer.lock.json', 'anything/new.txt',
+      ];
+      for (const rel of scriptOwned) {
         assert.equal(at(`.crafthelm/runs/OWN-RUN/${rel}`).code, 'SCRIPT_OWNED_ARTIFACT', rel);
       }
-      // The advisory reviewer writes its findings here.
+      // The advisory reviewer writes its findings here, and hand-over files for scripts go to the inbox.
       assert.equal(at('.crafthelm/runs/OWN-RUN/evidence/review.json').code, 'RUN_WORKSPACE');
+      assert.equal(at('.crafthelm/runs/OWN-RUN/inbox/worker-result.json').code, 'RUN_WORKSPACE');
 
       const checkpointPath = getCheckpointPath(repo, 'OWN-RUN');
       fs.writeFileSync(checkpointPath, JSON.stringify({ ...readJson(checkpointPath), state: 'ACCEPTED' }), 'utf8');
       assert.deepEqual(listActiveScopes(repo), []);
       assert.equal(at('migrations/001.sql').code, 'NO_ACTIVE_RUN');
-      // Script-owned files stay off limits after the run has ended.
+      // Script-owned files and control files stay off limits with no run in progress: this is where
+      // an agent would otherwise set contract_approved itself, or remove the hook.
       assert.equal(at('.crafthelm/runs/OWN-RUN/approvals/decision.json').decision, 'deny');
+      assert.equal(at('.crafthelm/contracts/NEXT.json').code, 'CONTROL_FILE');
+      assert.equal(at('.claude/settings.json').code, 'CONTROL_FILE');
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

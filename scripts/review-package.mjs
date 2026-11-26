@@ -17,6 +17,7 @@ import {
 } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES, assertTransition } from './lib/state-machine.mjs';
+import { assertNoForeignWriterLock } from './lib/writer-lock.mjs';
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -349,6 +350,7 @@ export function publishReviewPackage(options) {
   const runId = options.runId;
   const preset = options.preset ?? 'executive';
   const runDir = getRunDir(repoRoot, runId);
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'publish the review package of');
 
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
@@ -600,6 +602,7 @@ if (isMainModule(import.meta.url)) {
       repo: args.repo,
       runId: args['run-id'],
       contract: args.contract,
+      writer: typeof args.writer === 'string' ? args.writer : undefined,
       preset: args.preset,
       noKouetsu: Boolean(args['no-kouetsu']),
       kouetsuRoot: args['kouetsu-root'],

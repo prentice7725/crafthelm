@@ -133,6 +133,12 @@ describe('Human Gate: agent-session block, TTY confirmation tier, signed approva
     assert.equal(classifyAgentProcess({ name: 'claude.exe', commandLine: 'C:/Users/John Smith/AppData/Roaming/Claude/claude-code/2.1.0/claude.exe -p' }), 'claude-code');
     assert.equal(classifyAgentProcess({ name: 'Claude', commandLine: '/Applications/Claude.app/Contents/MacOS/Claude --type=renderer' }), null);
     assert.equal(classifyAgentProcess({ name: 'node', commandLine: 'node scripts/approval.mjs record' }), null);
+    // The Antigravity CLI by binary name, on every platform spelling; a path that merely contains the name is not it.
+    assert.equal(classifyAgentProcess({ name: 'agy.exe', commandLine: '"C:/Users/u/AppData/Local/Programs/agy/agy.exe" exec' }), 'antigravity');
+    assert.equal(classifyAgentProcess({ name: 'agy', commandLine: '/usr/local/bin/agy --print' }), 'antigravity');
+    assert.equal(classifyAgentProcess({ name: 'node', commandLine: 'node /usr/local/bin/agy exec' }), 'antigravity');
+    assert.equal(classifyAgentProcess({ name: 'bash', commandLine: '/bin/bash /home/u/agy-notes/run.sh' }), null);
+    assert.equal(detectAgentAncestry({ pid: 40, lookup: fakeProcessTree([[40, 30, 'node', 'node scripts/approval.mjs record'], [30, 1, 'agy', '/usr/local/bin/agy']]) }).ancestor.agent, 'antigravity');
 
     // node approval.mjs <- script (pseudo-terminal) <- bash <- claude: the wrapper does not hide the agent.
     const underAgent = fakeProcessTree([

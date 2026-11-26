@@ -35,6 +35,7 @@ import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-o
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
 import { extractCommandTargets } from './lib/test-runners.mjs';
+import { assertNoForeignWriterLock } from './lib/writer-lock.mjs';
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -173,7 +174,13 @@ function evaluateDifferential(ac, cmdResult, repoRoot) {
     return { passed: true, diffs: [] };
   }
 
-  const allowedPatterns = (ac.allowed_diffs ?? []).map((pat) => new RegExp(pat));
+  let allowedPatterns;
+  try {
+    allowedPatterns = (ac.allowed_diffs ?? []).map((pat) => new RegExp(pat));
+  } catch (err) {
+    // A pattern that does not compile approves nothing: report it as a failed check, not a crash.
+    return { passed: false, reason: `allowed_diffs has an invalid regular expression: ${err.message}`, diffs: [{ type: 'allowed_diffs_error', detail: err.message }] };
+  }
   const diffs = [];
 
   try {
@@ -413,6 +420,7 @@ export function runVerify(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const runDir = getRunDir(repoRoot, runId);
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'verify');
   // A probe killed mid-mutation leaves a mutated source and a journal. Restore it before anything
   // reads the tree: the snapshot, the checks and the probe itself must all see the original bytes.
   const recovered = recoverInterruptedProbe(repoRoot, path.join(runDir, 'evidence'));
@@ -1077,7 +1085,7 @@ function printUsage() {
       'CraftHelm Verification CLI (Execute AC Checks, E2E/Property/Diff, Reliability Rules)',
       '',
       'Usage:',
-      '  verify.mjs --repo <path> --run-id <id> [--contract <path>] [--selective] [--review-file <path>] [--policy-dir <dir>] [--quiet]',
+      '  verify.mjs --repo <path> --run-id <id> [--contract <path>] [--selective] [--review-file <path>] [--policy-dir <dir>] [--writer <id>] [--quiet]',
       '  verify.mjs --repo <path> --run-id <id> --record-red <ac-id> [--contract <path>]',
       '  verify.mjs --repo <path> --run-id <id> --record-baseline-green <ac-id> [--contract <path>]',
       '',
@@ -1113,6 +1121,7 @@ if (isMainModule(import.meta.url)) {
         repo: args.repo,
         runId: args['run-id'],
         contract: args.contract,
+        writer: typeof args.writer === 'string' ? args.writer : undefined,
         reviewFile: args['review-file'],
         policyDir: args['policy-dir'],
         selective: Boolean(args.selective),

@@ -67,7 +67,7 @@
     - 한계: 뮤테이션 검사는 기본으로 꺼져 있다. 경량 계약이 검사를 켜지 않으면 증거 강도는 정적 도달 여부로만 판정된다.
 14. **증거 로그의 기록과 대조 (`scripts/lib/evidence-io.mjs`):** 검사 명령의 stdout·stderr는 에이전트가 아니라 `verify`가 실행 디렉터리에 쓴다. 증거 매니페스트의 검사 항목마다 실행 명령, 종료 코드, 시작 시각(`started_at`), 소요 시간과 함께 저장한 로그의 SHA-256(`stdout_sha256`, `stderr_sha256`)을 남긴다.
 
-    - `review-package`와 `approve record`는 로그를 다시 해시해 매니페스트와 대조하고, 로그가 없거나 다르면 `EVIDENCE_LOG_ALTERED`로 멈춘다. `verify`를 다시 실행하면 로그와 해시가 새로 쓰인다.
+    - `review-package`와 `approve record`는 로그를 다시 해시해 매니페스트와 대조하고, 로그가 없거나 다르면 `EVIDENCE_LOG_ALTERED`로 멈춘다. 승인 뒤에도 같은 대조를 한다. `approve verify`는 로그가 바뀌면 결정을 `INVALIDATED`로 보고하고, `checkpoint resume`은 `READY_FOR_HUMAN_REVIEW`나 `ACCEPTED` 상태를 복원하지 않는다(`STALE_ARTIFACTS_CANNOT_RESTORE`). `resume`은 `ACCEPTED`를 복원할 때 서명과 보호된 승인자 정책도 다시 확인한다. `verify`를 다시 실행하면 로그와 해시가 새로 쓰인다.
     - 저장 전에 시크릿으로 보이는 값을 `[REDACTED:<이름>]`으로 가린다. 대상은 이름에 `TOKEN`·`SECRET`·`PASSWORD`·`API_KEY`·`PRIVATE_KEY`·`ACCESS_KEY`·`CREDENTIAL`이 들어간 환경 변수의 값(8자 이상)과, 형태가 알려진 토큰(PEM 개인 키, Anthropic·GitHub·AWS·Slack 토큰)이다. 가린 횟수는 검사 항목의 `redactions`에 남는다. 종료 코드 판정, differential 비교, property 반례 추출은 가리기 전 출력으로 한다.
     - 체크포인트, 증거 매니페스트, 검증 스탬프, 승인 레코드는 임시 파일에 쓴 뒤 이름을 바꾸는 방식으로 저장해, 쓰는 도중 프로세스가 죽어도 반쯤 쓰인 파일이 남지 않는다.
     - 한계: 매니페스트도 로그와 같은 실행 디렉터리에 있어 작업 공간에 쓸 수 있는 주체는 둘을 함께 고칠 수 있다. 이 대조가 잡는 것은 로그만 고친 경우다. 가림은 위 두 부류에 드는 값만 잡는다. 인수 검사와 신뢰성 규칙 명령의 출력에만 적용하고 `evidence/changes.patch`에는 적용하지 않는다.

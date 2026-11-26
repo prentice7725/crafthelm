@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { initCheckpoint } from '../../scripts/checkpoint.mjs';
-import { approveContractFile } from '../../scripts/contract.mjs';
+import { recordHumanDecision, verifyHumanDecision } from '../../scripts/approval.mjs';
+import { acquireWriterLock, initCheckpoint, releaseWriterLock, resumeRun } from '../../scripts/checkpoint.mjs';
+import { approveContractFile, checkContractReadiness } from '../../scripts/contract.mjs';
 import { findAlteredEvidenceLogs, redactSecrets } from '../../scripts/lib/evidence-io.mjs';
 import { assessEvidenceStrength } from '../../scripts/lib/evidence-strength.mjs';
 import { runGit } from '../../scripts/lib/git.mjs';
@@ -144,6 +145,47 @@ describe('Test weakening: a suite made green by switching tests off', () => {
   });
 });
 
+describe('Run state is not rewritten under another writer, and a bad pattern is a failed check', () => {
+  it('blocks verify and review-package while a foreign lock is held, lets the holder through, and says how to clear it', () => {
+    const repo = makeRepo();
+    try {
+      startRun(repo, 'LOCK', 'LOCK-RUN', [
+        { id: 'AC-01', requirement: 'REQ-01', kind: 'unit', command: 'node tests/greet.test.mjs', expected_exit_code: 0 },
+      ]);
+      assert.equal(acquireWriterLock({ repo, runId: 'LOCK-RUN', writer: 'builder-1' }).ok, true);
+      assert.throws(
+        () => runVerify({ repo, runId: 'LOCK-RUN' }),
+        /CONCURRENT_WRITER_BLOCKED: cannot verify run LOCK-RUN while writer "builder-1" holds its lock .*release-lock --run-id LOCK-RUN --force/,
+      );
+      assert.throws(() => runVerify({ repo, runId: 'LOCK-RUN', writer: 'builder-2' }), /CONCURRENT_WRITER_BLOCKED/);
+      assert.throws(() => publishReviewPackage({ repo, runId: 'LOCK-RUN' }), /CONCURRENT_WRITER_BLOCKED/);
+      assert.equal(fs.existsSync(getEvidenceManifestPath(repo, 'LOCK-RUN')), false);
+      assert.equal(runVerify({ repo, runId: 'LOCK-RUN', writer: 'builder-1' }).ok, true);
+      assert.match(acquireWriterLock({ repo, runId: 'LOCK-RUN', writer: 'builder-2' }).message, /release-lock --run-id LOCK-RUN --force/);
+      releaseWriterLock({ repo, runId: 'LOCK-RUN', force: true });
+      assert.equal(runVerify({ repo, runId: 'LOCK-RUN' }).ok, true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('fails a differential check whose allowed_diffs pattern does not compile, and warns before approval', () => {
+    const repo = makeRepo();
+    try {
+      const acceptance = [{
+        id: 'AC-01', requirement: 'REQ-01', kind: 'differential', command: 'node -p 2', expected_exit_code: 0, baseline: '1', allowed_diffs: ['total: (unclosed'],
+      }];
+      assert.deepEqual(checkContractReadiness({ change_kind: 'refactor', scope: { allow: [], protect: [] }, acceptance }).warnings.map((w) => w.code), ['ALLOWED_DIFFS_INVALID_REGEX']);
+      startRun(repo, 'RX', 'RX-RUN', acceptance);
+      const v = runVerify({ repo, runId: 'RX-RUN' });
+      assert.equal(v.technical_status, 'FAILED');
+      assert.match(v.failure_reasons.join('; '), /AC_FAILED:AC-01: allowed_diffs has an invalid regular expression/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('Evidence logs: hashed when written, checked before a human is asked', () => {
   it('blanks credential-like environment values and known token shapes, and counts them', () => {
     const env = { DEPLOY_TOKEN: 'tok-1234567890', SHORT_SECRET: 'abc', HOME: '/home/tok-1234567890-user' };
@@ -188,6 +230,20 @@ describe('Evidence logs: hashed when written, checked before a human is asked', 
       assert.equal(runVerify({ repo, runId: 'LOGS-RUN' }).ok, true);
       const fresh = JSON.parse(fs.readFileSync(getEvidenceManifestPath(repo, 'LOGS-RUN'), 'utf8'));
       assert.deepEqual(findAlteredEvidenceLogs(runDir, fresh), []);
+
+      // The same holds after a person has accepted: a log edited later invalidates the decision,
+      // and the run is not restored as ACCEPTED.
+      assert.equal(publishReviewPackage({ repo, runId: 'LOGS-RUN' }).state, 'READY_FOR_HUMAN_REVIEW');
+      assert.equal(recordHumanDecision({ repo, runId: 'LOGS-RUN', decision: 'accept', actor: 'reviewer', rationale: 'Checked the logs' }).state, 'ACCEPTED');
+      assert.equal(verifyHumanDecision({ repo, runId: 'LOGS-RUN' }).valid, true);
+      assert.equal(resumeRun({ repo, runId: 'LOGS-RUN' }).error_code, undefined);
+      fs.appendFileSync(path.join(runDir, fresh.checks[0].stdout_file), 'edited after acceptance\n', 'utf8');
+      const afterEdit = verifyHumanDecision({ repo, runId: 'LOGS-RUN' });
+      assert.equal(afterEdit.status, 'INVALIDATED');
+      assert.match(afterEdit.mismatches.join('; '), /evidence log altered after decision: AC-01/);
+      const resumed = resumeRun({ repo, runId: 'LOGS-RUN' });
+      assert.equal(resumed.error_code, 'STALE_ARTIFACTS_CANNOT_RESTORE');
+      assert.match(resumed.reasons.join('; '), /evidence log altered since verification: AC-01/);
     } finally {
       if (previous === undefined) delete process.env.CRAFTHELM_FIXTURE_API_KEY;
       else process.env.CRAFTHELM_FIXTURE_API_KEY = previous;

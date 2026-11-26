@@ -97,6 +97,9 @@ export function classifyAgentProcess(proc) {
   if (names.has('claude') && !DESKTOP_APP_PATH.test(line || String(proc.name ?? ''))) return 'claude-code';
   if (names.has('codex') || /@openai[\\/]codex/i.test(line)) return 'codex';
   if (names.has('gemini') || /@google[\\/]gemini-cli/i.test(line)) return 'gemini-cli';
+  // The Antigravity CLI. The Antigravity IDE itself is not matched, for the same reason as the Claude
+  // desktop app: a person typing in its terminal panel runs under the IDE too.
+  if (names.has('agy')) return 'antigravity';
   return null;
 }
 

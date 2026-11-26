@@ -140,7 +140,7 @@ export function selectWorker(role, capabilities, options = {}) {
     ? null
     : (options.modelTiers && Object.hasOwn(options.modelTiers, activeTier)
       ? options.modelTiers[activeTier]
-      : (options.tier ? tierDefaultHint : (role === 'lead' ? null : (role === 'explorer' || role === 'learning_curator' ? 'flash' : null))));
+      : (options.tier ? tierDefaultHint : (role === 'lead' ? null : cfg.model_hint)));
 
   return {
     role,

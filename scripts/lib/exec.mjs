@@ -2,6 +2,11 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Looking a program up spawns `where`/`which`. git alone is looked up dozens of times per verify,
+// so a found path is remembered for the search path it was found on. Misses are not cached:
+// a tool can be installed while a long session runs.
+const resolvedCache = new Map();
+
 /**
  * Resolve an executable on the current platform (handling Windows .exe/.cmd/.ps1).
  * @param {string} name
@@ -16,6 +21,9 @@ export function resolveExecutable(name, options = {}) {
   if (path.isAbsolute(name) && fs.existsSync(name)) {
     return { found: true, path: name, kind: classifyExtension(name) };
   }
+  const cacheKey = [process.platform, name, env.PATH ?? env.Path ?? '', env.PATHEXT ?? ''].join('\u0000');
+  const cached = resolvedCache.get(cacheKey);
+  if (cached) return { ...cached };
   const locator = process.platform === 'win32' ? 'where.exe' : 'which';
   const result = spawnSync(locator, [name], {
     env,
@@ -45,7 +53,9 @@ export function resolveExecutable(name, options = {}) {
   });
 
   const chosen = candidates[0];
-  return { found: true, path: chosen, kind: classifyExtension(chosen) };
+  const located = { found: true, path: chosen, kind: classifyExtension(chosen) };
+  resolvedCache.set(cacheKey, located);
+  return { ...located };
 }
 
 function classifyExtension(filePath) {

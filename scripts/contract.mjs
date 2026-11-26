@@ -65,6 +65,20 @@ export function checkContractReadiness(contract) {
     }
   }
 
+  for (const ac of Array.isArray(contract?.acceptance) ? contract.acceptance : []) {
+    for (const pattern of ac?.allowed_diffs ?? []) {
+      try {
+        new RegExp(pattern);
+      } catch (err) {
+        warnings.push({
+          code: 'ALLOWED_DIFFS_INVALID_REGEX',
+          message: `acceptance ${ac.id} allowed_diffs pattern "${pattern}" is not a valid regular expression (${err.message}); verify would fail that check.`,
+          guidance: 'Fix the pattern, escaping characters that are meant literally.',
+        });
+      }
+    }
+  }
+
   // An unsupported pattern is matched literally and so matches nothing; in scope.protect that fails open.
   for (const list of ['allow', 'protect']) {
     for (const pattern of contract?.scope?.[list] ?? []) {

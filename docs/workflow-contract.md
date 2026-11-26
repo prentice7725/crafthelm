@@ -6,6 +6,7 @@
 - **Stage Mode:** 지정 단계(`--to` 또는 `--only`)의 진입 조건을 검증한 후 실행하고 산출물을 저장한다.
 - **Resume:** `git_head`, `contract_sha256`, `skill_lock_sha256`, 보호 경로 및 스냅샷 해시를 대조한다. 계약/수용기준/SOT 변경 시 `REPLAN_REQUIRED`로 전환한다.
 - **Process Profile:** 계약의 `process_profile`은 `full`(기본) 또는 `lite`다. `lite`는 작은 버그 수정에 한해 E2E 요구를 조건부로 면제하며(`docs/quality-contract.md` 13항), 상태 전이와 사람의 최종 인수 절차는 `full`과 같다.
+- **단일 writer 락:** `checkpoint acquire-lock --writer <id>`로 잡은 락이 있으면 `verify`, `feedback`, `review-package`, `checkpoint stage`·`replan`·`resume`은 `CONCURRENT_WRITER_BLOCKED`로 멈춘다. 락을 잡은 쪽은 같은 `--writer <id>`를 넘겨 통과한다. 락은 프로세스가 아니라 writer 이름에 걸리며, 락을 잡는 명령은 곧바로 끝나므로 기록된 PID로는 버려진 락을 가려낼 수 없다. 남은 락은 사람이 `checkpoint release-lock --run-id <id> --force`로 푼다.
 - **Replan:** 기존 결정문 이력을 덮어쓰지 않고 영향받는 단계·테스트만 무효화한다.
 
 ## 상태 전이 규칙

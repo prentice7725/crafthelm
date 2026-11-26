@@ -248,6 +248,11 @@ export function verifyHumanDecision(options) {
   }
   if (!fs.existsSync(manifestPath) || sha256File(manifestPath) !== decision.evidence_manifest_sha256) {
     mismatches.push('evidence_manifest_sha256 changed after decision');
+  } else {
+    // The manifest is intact, so the log hashes in it are the ones the decision was made on.
+    for (const altered of findAlteredEvidenceLogs(getRunDir(repoRoot, runId), readJson(manifestPath))) {
+      mismatches.push(`evidence log altered after decision: ${altered}`);
+    }
   }
 
   // Identity: a broken signature, or a missing/untrusted one under `require_signed`, invalidates the decision.

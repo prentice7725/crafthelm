@@ -10,7 +10,7 @@ const SHA_B = 'b'.repeat(64);
 const SHA_C = 'c'.repeat(64);
 
 describe('CraftHelm JSON Schemas', () => {
-  it('validates all 12 schemas with valid and invalid fixtures', () => {
+  it('validates the schemas with valid and invalid fixtures', () => {
     const validExecution = {
       schema_version: '0.3',
       task_id: 'CH-T001',
@@ -360,7 +360,34 @@ describe('CraftHelm JSON Schemas', () => {
     });
     assert.equal(validateAgainstSchema('evidence', skippedEvidence).valid, true);
 
-    // Ensure all 12 schema files exist under contracts/schemas/
+    const validDelegation = {
+      schema_version: '0.3',
+      delegation_id: 'D001',
+      run_id: 'RUN-01',
+      task_id: 'CH-T001',
+      observation: 'observed',
+      host: 'claude',
+      role: 'builder',
+      task_type: 'implement',
+      tier: 'standard',
+      model_requested: 'sonnet',
+      degraded_to_single_model: false,
+      status: 'OK',
+      exit_code: 0,
+      duration_ms: 1200,
+      prompt_sha256: SHA_A,
+      usage: { status: 'unknown', input_tokens: 'unknown', output_tokens: 'unknown', cache_tokens: 'unknown', cost_usd: 'unknown' },
+      output_file: 'delegations/D001.output.txt',
+      recorded_at: '2026-11-27T00:00:00.000Z',
+    };
+    assert.deepEqual(validateAgainstSchema('delegation-record', validDelegation).errors, []);
+    assert.equal(validateAgainstSchema('delegation-record', { ...validDelegation, role: 'lead' }).valid, false);
+    assert.equal(validateAgainstSchema('delegation-record', { ...validDelegation, delegation_id: 'X1' }).valid, false);
+    assert.equal(validateAgainstSchema('delegation-record', { ...validDelegation, usage: { ...validDelegation.usage, cost_usd: 'about 3' } }).valid, false);
+    // A self-reported record must carry the worker's result packet.
+    assert.equal(validateAgainstSchema('delegation-record', { ...validDelegation, observation: 'self_reported' }).valid, false);
+
+    // Ensure all 13 schema files exist under contracts/schemas/
     const schemaFiles = fs.readdirSync(path.join(CRAFTHELM_ROOT, 'contracts', 'schemas')).filter((f) => f.endsWith('.schema.json'));
     assert.equal(schemaFiles.length, 13);
   });
