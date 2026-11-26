@@ -35,6 +35,7 @@ import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-o
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
 import { extractCommandTargets } from './lib/test-runners.mjs';
+import { appendVerifyRound, formatVerifyHistoryText, readVerifyHistory, summarizeVerifyHistory } from './lib/verify-history.mjs';
 import { assertNoForeignWriterLock } from './lib/writer-lock.mjs';
 
 function readJson(filePath) {
@@ -1031,6 +1032,9 @@ export function runVerify(options) {
   assertValidSchema('evidence', manifest, `evidence-manifest ${runId}`);
   writeJson(getEvidenceManifestPath(repoRoot, runId), manifest);
 
+  // The manifest and the check logs are overwritten next round; this keeps what this round found.
+  appendVerifyRound(runDir, { runId, targetSnapshotDigest, technicalStatus, scopeStatus, failureReasons, checks });
+
   // Append-only calibration data for the lite limits (the manifest above is overwritten next round).
   appendProfileObservation(runDir, {
     schema_version: '0.3',
@@ -1081,6 +1085,15 @@ export function runVerify(options) {
   };
 }
 
+/**
+ * Every verify round of a run, with repeated runs folded and the change between attempts named.
+ * @param {{ repo?: string, runId: string }} options
+ */
+export function getVerifyHistory(options) {
+  const repoRoot = path.resolve(options.repo ?? '.');
+  return { run_id: options.runId, ...summarizeVerifyHistory(readVerifyHistory(getRunDir(repoRoot, options.runId))) };
+}
+
 function printUsage() {
   process.stdout.write(
     [
@@ -1088,6 +1101,7 @@ function printUsage() {
       '',
       'Usage:',
       '  verify.mjs --repo <path> --run-id <id> [--contract <path>] [--selective] [--review-file <path>] [--policy-dir <dir>] [--writer <id>] [--quiet]',
+      '  verify.mjs --repo <path> --run-id <id> --history [--json]',
       '  verify.mjs --repo <path> --run-id <id> --record-red <ac-id> [--contract <path>]',
       '  verify.mjs --repo <path> --run-id <id> --record-baseline-green <ac-id> [--contract <path>]',
       '',
@@ -1103,6 +1117,12 @@ if (isMainModule(import.meta.url)) {
   }
   const args = parseArgs(argv);
   try {
+    if (args.history) {
+      // Read-only: shows what earlier rounds found, runs nothing.
+      const history = getVerifyHistory({ repo: args.repo, runId: args['run-id'] });
+      process.stdout.write(args.json ? `${JSON.stringify(history, null, 2)}\n` : formatVerifyHistoryText(history.run_id, history));
+      process.exit(0);
+    }
     let res;
     if (args['record-red']) {
       res = recordRedEvidence({

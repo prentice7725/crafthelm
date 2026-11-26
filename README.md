@@ -1,105 +1,85 @@
 # CraftHelm
 
-> **The Lead Steers. Workers Build. Evidence Decides.**  
-> Single-Provider · Interview-First · Methodology-Composable · Delegation-First · Evidence-Driven
+CraftHelm은 단일 AI 호스트(Claude Code, Codex, Antigravity `agy`·IDE 세션, Gemini CLI, 또는 사용자 정의 CLI) 안에서 작업 계약, 결정적 검증, 사람의 최종 인수 절차를 강제하는 개발 운영 프레임워크입니다. 다른 AI 공급자 CLI나 외부 브로커를 부르지 않으며, 외부 npm 패키지 없이 Node.js 24 이상 내장 모듈(`node:sqlite`, `node:test`, `node:crypto`)만으로 동작합니다.
 
-CraftHelm은 **단일 AI 공급자·단일 AI 호스트(Claude Code, Codex, Antigravity `agy`·IDE 세션, 또는 임의의 사용자 정의 AI CLI/에이전트)**로 동작하는 개발 운영 프레임워크입니다. 요구사항 인터뷰부터 실행 계약, 작업 분해, 구현, 실행 기반 검증, Kouetsu 교열 기반 인수 검토 보고서 발행, 그리고 **사람의 최종 인수 결정**까지의 흐름을 강제합니다.
+요구사항 정리와 코드 수정은 에이전트가 맡고, 테스트 실행·범위 검사·해시 기록은 로컬 스크립트가 맡습니다. 최종 인수 여부는 지정된 승인자가 결정합니다. 자동 검증이 통과해도 상태는 `READY_FOR_HUMAN_REVIEW`에서 멈추며, `COMPLETE` 상태는 없습니다.
 
-## 핵심 원칙
+호스트 스킬을 등록하면 세션 안의 에이전트가 `interview`, `route`, `delegate`, `verify`, `review-package` CLI를 순서대로 호출해 작업합니다. 계약 승인(`contract approve`), 잠금 해제(`checkpoint release-lock`), 키 생성(`approve keygen`), 최종 인수(`approve record`)는 사람이 터미널에서 직접 실행합니다.
 
-- **Single Provider, Host-Agnostic:** Claude-only, Codex-only, Antigravity(`agy` 또는 IDE 세션), 또는 범용(`generic` / 사용자 정의 CLI) 환경에서 다른 공급자 CLI나 브로커 없이 완결됩니다.
-- **Interview Before Execution:** `BLOCKER` 불확실성이 남으면 실행을 진행하지 않고 `INTERVIEW_REQUIRED`를 반환합니다.
-- **Methodology Composable:** `lifecycle × specification × engineering × execution` 4축으로 방법론을 조합합니다.
-- **Verification Is Executed Evidence:** 결정적 스크립트가 보호된 `base_ref` 기준선의 정책을 사용해 실제 명령을 실행하고 스냅샷 해시를 연결합니다.
-- **Human Owns Done:** 자동 검증 통과 상태는 `READY_FOR_HUMAN_REVIEW`까지만 도달합니다. `COMPLETE` 상태는 존재하지 않으며, `ACCEPTED` 전이는 오직 지정 승인자의 명시적 결정 입력으로만 가능합니다.
+## 작업 흐름과 구성
 
-## 책임 경계
+작업은 인터뷰와 계약 승인, 구현과 작업 분배, 실행 검증, 검토 보고서 발행, 사람 인수 다섯 단계로 이어집니다. 모든 산출물 구조는 `contracts/schemas/*.schema.json`에 정의된 13개 JSON Schema로 검증합니다.
 
-| 판정 유형 | 주체 | 의미 |
+1. **인터뷰와 계약 승인 (`start.mjs`, `interview.mjs`, `contract.mjs`):** 저장소 문서와 최근 Git 이력을 먼저 읽고, 요청 문구와 저장소 신호에서 질문을 만들어 `docs/tasks/<task_id>/interview_questions.md`에 남깁니다. `scope`, `acceptance`, `data`, `security`, `compatibility` 다섯 영역의 검토 여부도 함께 기록합니다. 기본적으로 미답변 질문은 가정으로 남겨 `CONTRACT_PENDING` 계약을 생성합니다. `--strict-interview`를 켜거나 입력 JSON에 미해결 `BLOCKER`가 있으면 계약을 쓰지 않고 `INTERVIEW_REQUIRED`를 돌려주며 멈춥니다. 이때는 `--scope-allow`·`--e2e-cmd`·`--test-cmd` 옵션을 채우거나 `interview --input <응답.json>`으로 답을 넘겨 다시 시작합니다. 계약의 기본 허용 범위(`scope.allow`)는 `['src/**', 'tests/**']`, 보호 경로(`scope.protect`)는 `tests/acceptance/**`, `docs/approved/**`, `REVIEW.md`, `.crafthelm/reliability-rules.json`입니다. 계약을 수정한 뒤에는 `contract approve`로 다시 승인받아야 합니다. 방법론은 `lifecycle`·`specification`·`engineering`·`execution` 네 설정 조합으로 12단계 계획을 생성합니다.
+2. **구현과 작업 분배 (`checkpoint.mjs`, `route.mjs`, `delegate.mjs`, `memory.mjs`):** 에이전트는 허용 범위(`scope.allow`) 안에서 코드를 수정합니다. `route`는 작업을 `deterministic`·`lightweight`·`standard`·`reasoning` 네 단계로 분류해 `.crafthelm/config.json`의 `host_profiles`·`model_tiers`와 환경 변수(`CRAFTHELM_MODEL_LIGHTWEIGHT`, `CRAFTHELM_MODEL_STANDARD`, `CRAFTHELM_MODEL_REASONING`)에 맞는 모델 힌트를 고릅니다. `delegate run --execute`는 호스트 어댑터로 워커를 실행해 사용량을 실측하고, 세션 내 서브에이전트 결과는 `delegate record`로 받습니다. 위임 기록이 없으면 증거 매니페스트에 `UNOBSERVED`로 남깁니다. 작업 상태는 단일 writer 락과 체크포인트로 관리하며 같은 원인 실패가 3라운드를 넘기면 `BLOCKED_HUMAN_ATTENTION`으로 멈춥니다. 장기 결정과 이력은 Markdown 원문과 `node:sqlite` FTS5 색인(`memory.mjs`)으로 관리합니다.
+3. **실행 검증과 증거 강도 (`verify.mjs`, `impact.mjs`):** `verify`는 보호된 기준선(`policy_base_ref`)에서 검증 규칙을 읽어 `fast`·`unit`·`e2e`·`property`·`differential` 수용 기준과 Diff 기반 신뢰성 규칙(`observe`/`enforce`)을 실행합니다. 다언어(JS/TS·Python·Go·Rust·Java/Kotlin·C#·C/C++·Ruby·PHP) 정적 영향도 분석과 커스텀 분석기(`--analyzer-cmd`)를 결합해 `--selective` 회귀 테스트를 고르고, 전역 설정 변경이나 매칭 0건일 때는 전체 테스트로 돌아갑니다. 통과한 검사가 실제로 변경 코드를 실행했는지와 테스트 약화(삭제·skip·단언 감소) 여부를 `evidence_strength`에 기록하며 `--mutation-probe`를 켜면 변경된 줄을 깨뜨려 통과한 테스트가 실제로 실패하는지도 확인합니다.
+4. **검토 보고서 발행과 교열 (`review-package.mjs`):** `READY_FOR_HUMAN_REVIEW` 단계에 올릴 8개 섹션 보고서(`reports/review-package.md`)를 만들고, 증거 매니페스트와의 수용 기준 일치 여부·깨진 파일 링크·Kouetsu `1.0.2` 기반 3계층 교열 게이트를 점검합니다. 이 교열 게이트는 저장소에 포함된 Kouetsu 번들로 바로 실행됩니다. `EDITORIAL_GATE_FAILED`나 `CRITICAL_CONFIRMATION_BLOCKED`로 차단되면 `.crafthelm/runs/<run_id>/reports/editorial-report.json`의 `findings`와 `critical_confirmations`를 확인해 문구 또는 미해결 항목을 정리한 뒤 `review-package`를 다시 실행합니다.
+5. **사람의 최종 인수 (`approval.mjs`):** AI 에이전트 세션과 비대화형 터미널의 `approve record` 호출을 막고, 지정 승인자의 명시적 결정과 사유만 기록합니다. 저장소에 보호된 승인자 정책(`.crafthelm/approvers.json`)이 있으면 등록된 `actor`의 `ed25519` 서명만 받습니다. 서명을 강제하려면 AI 세션 밖의 터미널에서 `approve keygen --out <개인키_경로> --actor <이름>`으로 키를 만든 뒤 개인키는 저장소 밖에 보관하고, 출력된 공개키 지문을 기본 브랜치의 `.crafthelm/approvers.json`(`"require_signed": true`)에 커밋합니다. 승인 뒤에 코드·계약·증거·보고서·서명이 달라지면 효력을 무효로 판정합니다.
+
+## 판정 주체와 한계
+
+| 판정 구분 | 담당 주체 | 확인하는 것과 한계 |
 |---|---|---|
-| Deterministic Check | 로컬 검증 스크립트 | 계약·범위·스냅샷·테스트·링크 일치 여부를 기계적으로 확인 |
-| AI Advisory Review | 분리된 Reviewer 컨텍스트 | 코드·설계 위험 가설을 제시(사실 확정이 아님) |
-| Editorial Review | Kouetsu | 문장 명확성·모순·누락·표면 패턴을 점검(코드/사실 검증이 아님) |
-| Human Acceptance | 지정 사람/승인자 | 최종 인수 승인·수정 요청·반려·추가 검증을 결정하고 책임을 짐 |
+| 결정적 검증 | 로컬 검증 스크립트 | 계약·범위·스냅샷·테스트 종료 코드·링크 일치를 기계적으로 확인합니다. 테스트 자체의 품질이나 누락된 시나리오는 대신 판단하지 못합니다 |
+| AI 보조 리뷰 | 분리된 리뷰어 컨텍스트 | 코드와 설계의 위험 가설을 제안합니다. 제안은 참고용이며 사실을 확정하지 않습니다 |
+| 문서 교열 | Kouetsu (`1.0.2`) | 보고서 문장의 명확성·모순·누락·표면 패턴을 점검합니다. 코드 결함 부재나 사실 진위를 증명하지 않습니다 |
+| 최종 인수 | 지정된 사람·승인자 | 검증 결과와 남은 위험을 검토해 승인·수정 요청·반려·추가 검증을 결정하고 책임을 집니다 |
 
-## 현재 구현 범위
-
-`main` 기준으로 동작하는 기능입니다.
-
-- 13개 JSON Schema 계약 (`contracts/schemas/*.schema.json`)
-- Claude / Codex / Antigravity(`agy`·IDE 세션) / Gemini / Generic·커스텀 CLI 단일 공급자 호스트 어댑터 및 `doctor` 환경 탐지
-- 인터뷰·실행 계약·4축 방법론 플래너·단일 writer 락·체크포인트·재개/핸드오프 패킷(`tried_and_failed`)·재계획·3라운드 에스컬레이션
-- Markdown SOT + 재구축 가능한 `node:sqlite` FTS5 장기 메모리(`memory.mjs`: `supersedes` 결정 교체·에피소드 로그 자연 감쇠, LLM 비용 0원)
-- 다언어(JS/TS·Python·Go·Rust·Java/Kotlin·C#·C/C++·Ruby·PHP) 내장 + 커스텀 분석기 플러그인(`--analyzer-cmd`) 기반 AST·콜 그래프 영향도 분석(`impact.mjs`), 범용 테스트 러너 감지(`node-test`/`vitest`/`jest`/`pytest`/`go-test`/`cargo-test`/`maven`/`gradle`/`dotnet-test`/`rspec`/`phpunit`/`ctest`), 선택적 회귀 테스트(`verify.mjs --selective` + 안전 폴백), 자동 검증·피드백·승인 요청 루프(`feedback-loop.mjs`)
-- 4티어 비용 효율 모델 분리 라우터(`route.mjs`: `deterministic` / `lightweight` / `standard` / `reasoning`, `host_profiles`·`CRAFTHELM_MODEL_*`·다국어 프롬프트 분류·커스텀 CLI/인세션 `supports_multi_model` 지원)
-- 보호된 `policy_base_ref` 기반 실행 검증(`fast`/`unit`/`e2e`/`property`/`differential`), Diff-Triggered Reliability Rules(`observe`/`enforce`), 스냅샷 `STALE` 탐지
-- Kouetsu 1.0.2 감사·Pinning 및 Review Package 교열·링크/AC 교차 검증 게이트
-- 명시적 인간 결정 레코드(`approval.mjs`) 및 코드/보고서 변경 시 승인 효력 무효화 검증
-- 뮤테이션 검사(`verify --mutation-probe`): 변경된 줄을 깨뜨려(연산자 뒤집기, JS/TS·Python은 문장 삭제 포함) 통과한 검사가 실패하는지 확인하는 결정적 교차 검증 대체 수단. 검사 도중 중단되면 다음 `verify`가 저널을 검증해 원본을 복원하고, 그사이 파일이 바뀌었으면 복원하지 않고 `probe_recovery`에 기록
-- 실측 벤치마크(`benchmark live --i-accept-cost`): 호스트 CLI가 보고한 토큰·비용으로 A/B/C 비교
-- 위임 실행 기록(`delegate run|record`): 어댑터로 워커를 실제 실행해 사용량을 실측하거나 세션 내 워커 결과 패킷을 접수, 기록이 없으면 `UNOBSERVED` 표기
-- 결정적 인터뷰 질문 생성(`interview_questions.md`)과 영역별 검토 여부(`uncertainty_coverage`), 엄격 모드(`--strict-interview`)
-- 증거 강도 등급(`evidence_strength`): 통과한 검사가 이번 변경을 실제로 다루는지 기계적으로 판정해 검토 보고서에 표시. 테스트 파일 삭제, skip·only 추가, 단언 삭제도 신호로 잡음
-- 증거 로그 대조: `verify`가 저장한 검사 출력의 SHA-256을 매니페스트에 남기고, 보고서 발행과 승인 기록 전에 다시 대조(`EVIDENCE_LOG_ALTERED`). 저장 전 시크릿으로 보이는 값은 가림
-- 작은 작업용 단축 흐름: `start --init-run`(계약 승인 + 기준선 동결), `feedback`(검증 + 보고서 발행)
-- 경량 프로필(`--profile lite`): 작은 버그 수정에 한한 E2E 조건부 면제, 조건 초과 시 `LITE_PROFILE_EXCEEDED`. 변경 코드를 직접 호출하는 전용 테스트(`--test-cmd`, `contract add-test`)가 있어야 면제되며, `calibrate lite`로 한도를 실측 데이터와 대조
-- 승인 게이트: 에이전트 세션·비대화형 실행 차단, 신원 등급 표기, 보호된 승인자 정책(`.crafthelm/approvers.json`) 기반 ed25519 서명 승인
-- E01~E04, E10 결정적 벤치마크 하네스와 실측 A/B/C 하네스 (미측정 항목은 `"unknown"`으로 기록)
-- GitHub Actions CI: 모든 PR과 `main` 푸시에서 Ubuntu·Windows, Node 24로 `npm test` 실행
+요구 런타임은 Node.js 24 이상입니다. 낮은 버전에서 실행하면 CLI가 필요한 버전을 한 줄로 알리고 멈춥니다.
 
 ## 에이전트의 보고를 믿지 않는 지점
 
-검사는 에이전트가 아니라 `verify` 스크립트가 직접 실행하고, 출력과 종료 코드를 실행 디렉터리에 남깁니다. 에이전트가 "통과했다"고 쓴 문장은 어디에도 근거로 쓰이지 않습니다.
+검사는 에이전트가 아니라 `verify` 스크립트가 실행하고 출력과 종료 코드를 실행 디렉터리에 남깁니다. 에이전트가 "통과했다"고 적은 문장은 근거로 쓰이지 않습니다.
 
-| 에이전트가 하는 일 | 걸리는 곳 | 결과 |
+| 우회 시도 | 막는 장치 | 결과 |
 |---|---|---|
-| 실행하지 않은 테스트를 통과했다고 보고 | `verify`가 계약의 명령을 직접 실행 | 종료 코드가 다르면 `AC_FAILED` |
-| 계약에 없는 파일을 함께 수정 | `scope.allow`·`scope.protect`와 diff 대조. Claude Code에서는 범위 가드 훅이 쓰기 전에 차단 | `SCOPE_VIOLATION`, `PROTECTED_PATH_VIOLATION` |
-| 증거 파일이나 승인 레코드를 직접 작성 | 범위 가드 훅 (Claude Code) | 파일 도구 호출이 차단됨 (`SCRIPT_OWNED_ARTIFACT`) |
-| 계약의 승인 필드나 Claude 설정을 직접 수정 | 범위 가드 훅 (Claude Code), 실행이 없을 때도 적용 | 파일 도구 호출이 차단됨 (`CONTROL_FILE`) |
-| 검증 규칙이나 계약을 고쳐서 통과 | 정책은 `policy_base_ref`에서 읽고 계약은 해시로 고정 | 변조 탐지, `CONTRACT_HASH_MISMATCH` |
-| 실패하는 테스트를 끄거나 지워서 통과 | 테스트 파일 diff | 증거 강도 `weak` (`TEST_FILE_DELETED`, `TEST_SKIP_ADDED`, `ASSERTIONS_REMOVED`) |
-| 변경을 건드리지 않는 테스트만 통과 | 영향도 분석, 뮤테이션 검사 | 증거 강도 `weak` (`NO_TEST_REACHES_CHANGE`, `MUTANTS_SURVIVED`) |
-| 검증 뒤에 코드나 로그를 수정 | 스냅샷 해시, 로그 해시 | `STALE_SNAPSHOT`, `EVIDENCE_LOG_ALTERED` |
-| 스스로 인수 승인 | 에이전트 세션·비대화형 실행 차단 | 승인 레코드가 생성되지 않음 |
+| 실행하지 않은 테스트를 통과했다고 보고 | `verify`가 계약의 명령을 직접 실행 | 종료 코드가 기대와 다르면 `AC_FAILED`로 실패합니다 |
+| 계약에 없는 파일이나 보호 경로를 수정 | `scope.allow`·`scope.protect`와 diff 대조 | `SCOPE_VIOLATION` 또는 `PROTECTED_PATH_VIOLATION`으로 실패합니다 |
+| 실행 디렉터리(`review.json`·`inbox/**` 제외)나 통제 파일을 직접 수정 | Claude Code 프로젝트 범위 설치 시 등록된 범위 가드 훅(실행이 없을 때도 동작) | `Edit`·`Write` 계열 도구 호출을 차단하고 `SCRIPT_OWNED_ARTIFACT` 또는 `CONTROL_FILE`을 돌려줍니다 |
+| 검증 규칙이나 계약을 고쳐서 통과 | 정책은 `policy_base_ref`에서 읽고 계약은 해시로 고정 | 변조 시 `CONTRACT_HASH_MISMATCH`가 발생합니다 |
+| 실패하는 테스트를 끄거나 지워서 통과 | 테스트 파일 diff 검사 (`test-weakening.mjs`) | 증거 강도를 `weak`로 낮추고 `TEST_FILE_DELETED`·`TEST_SKIP_ADDED`·`ASSERTIONS_REMOVED`를 올립니다 |
+| 변경 코드를 건드리지 않는 테스트만 통과 | 영향도 분석과 `--mutation-probe` | 증거 강도를 낮추고 `NO_TEST_REACHES_CHANGE`·`MUTANTS_SURVIVED`를 보고합니다 |
+| 검증 뒤에 코드나 저장된 증거 로그를 수정 | 스냅샷 해시와 `stdout_sha256`·`stderr_sha256` 재대조 | `STALE_SNAPSHOT`, `EVIDENCE_LOG_ALTERED`, `INVALIDATED`, `STALE_ARTIFACTS_CANNOT_RESTORE`로 막습니다 |
+| 스스로 최종 인수를 승인 | 에이전트 세션·비대화형 터미널 차단 및 서명 정책 | 승인 레코드를 생성하지 않습니다 |
 
-증거 강도 신호는 검증을 실패시키지 않고 검토 보고서의 위험 항목으로 올라갑니다. 낡은 테스트를 지우는 정당한 변경과 구별할 수 없어서 판단은 승인자에게 남깁니다. 단, 경량 프로필에서는 `weak` 등급이면 E2E 면제가 취소됩니다. 각 항목의 조건과 한계는 [docs/quality-contract.md](docs/quality-contract.md)에 있습니다.
+증거 로그 해시는 `verify`가 매니페스트에 기록한 뒤 `review-package`, `approve record`, `approve verify`, `checkpoint resume`에서 매번 다시 대조합니다. 로그는 저장하기 전에 시크릿 패턴과 관련 환경 변수 값을 가립니다. Claude Code 범위 가드 훅은 파일 도구 호출만 보므로, 다른 호스트나 셸 명령으로 쓴 파일은 `verify`가 사후에 차단합니다. 증거 강도 신호는 검증 자체를 실패시키지 않고 검토 보고서 위험 항목에 올립니다. 낡은 테스트를 지우는 정당한 변경과 구별하기 어렵기 때문에 최종 판단은 승인자에게 남깁니다. 단, 경량 프로필에서는 등급이 `weak`가 되면 E2E 면제를 취소합니다. 각 항목의 조건과 한계는 [품질 계약 문서](docs/quality-contract.md)에 있습니다.
 
-요구 런타임은 Node.js 24 이상입니다. 외부 패키지 없이 `node:sqlite`와 `node:test`를 쓰기 때문이며, 낮은 버전에서 실행하면 CLI가 필요한 버전을 한 줄로 알려 주고 멈춥니다.
+## 빠른 시작
 
-## 빠른 시작 (작은 버그 수정 예제)
+CraftHelm은 별도 패키지 설치 없이 이 저장소를 클론한 디렉터리에서 실행하며, `--repo`로 대상 저장소를 지정합니다. 대상 저장소에는 기준선 비교와 스냅샷 계산을 위해 초기 커밋이 있는 Git 저장소가 필요합니다.
 
-아래 순서를 그대로 복사해 실행하면 대상 저장소에서 인터뷰 → 계약 검증/승인 → 실행 체크포인트 생성 → E2E 포함 검증 → 검토 보고서 생성 → 사람의 최종 승인 기록까지 한 번에 확인할 수 있습니다.
+아래 명령을 순서대로 실행하면 대상 저장소에서 인터뷰, 계약 승인, 실행 기준선 동결, 검증, 검토 보고서 발행, 사람 인수 결정까지 한 번에 확인합니다.
 
 ```bash
-# 1) 대상 저장소 준비 및 작업 시작 (환경/러너 자동 탐지 + CH-T001 계약 생성 + 다음 명령 안내)
+# 1) 대상 저장소 준비 및 작업 시작 (환경·러너 탐지 + CH-T001 계약 생성 + 다음 명령 안내)
 node scripts/crafthelm.mjs init-host --repo /path/to/repo --host generic
 node scripts/crafthelm.mjs start "로그인 토큰 만료 비교 연산 오류 수정" \
   --repo /path/to/repo \
   --change-kind bugfix \
+  --scope-allow "src/**,tests/**" \
   --e2e-cmd "node tests/e2e.test.mjs"
 
-# 2) 계약 스키마 + E2E 정책 준비 상태 확인 후 명시적 승인
+# 2) 계약 스키마와 E2E 정책 확인 뒤 명시적 승인
 node scripts/crafthelm.mjs contract validate /path/to/repo/.crafthelm/contracts/CH-T001.json
 node scripts/crafthelm.mjs contract approve /path/to/repo/.crafthelm/contracts/CH-T001.json --actor operator
 
-# 3) 실행 기준선(체크포인트) 동결 및 현재 상태/다음 행동 확인
+# 3) 실행 기준선 동결과 현재 상태 확인 (`--run-id`로 실행 ID 직접 지정)
 node scripts/crafthelm.mjs checkpoint init \
   --repo /path/to/repo \
   --contract /path/to/repo/.crafthelm/contracts/CH-T001.json \
   --run-id RUN-001
 node scripts/crafthelm.mjs status --repo /path/to/repo
 
-# --- 여기서 범위(scope.allow) 내 코드를 수정한 뒤 ---
+# --- 여기서 범위(scope.allow) 안의 코드를 수정합니다 ---
 
-# 4) 선택적 회귀 테스트 + E2E 검증 실행 (진행 로그는 stderr, 결과 JSON은 stdout)
+# 4) 선택적 회귀 테스트 + E2E 검증 실행 (stderr: 로그, stdout: 결과 JSON)
 node scripts/crafthelm.mjs verify --repo /path/to/repo --run-id RUN-001 --selective
 
 # 5) 8개 섹션 검토 보고서 발행 (READY_FOR_HUMAN_REVIEW 도달)
 node scripts/crafthelm.mjs review-package --repo /path/to/repo --run-id RUN-001
 
 # 6) 사람이 보고서를 검토한 뒤 최종 인수 결정 기록
-#    (AI 세션 밖의 대화형 터미널에서 직접 실행. 보고서 SHA-256 끝 8자 입력으로 확인)
+#    (AI 세션 밖의 대화형 터미널에서 실행. 서명이 없으면 보고서 SHA-256 끝 8자 입력)
 node scripts/crafthelm.mjs approve record \
   --repo /path/to/repo \
   --run-id RUN-001 \
@@ -110,7 +90,7 @@ node scripts/crafthelm.mjs approve record \
 
 ### 작은 작업용 단축 흐름
 
-`--init-run`은 계약 승인과 실행 기준선 동결을 `start` 한 번에 묶고, `feedback`은 검증과 검토 보고서 발행을 묶습니다. 사람이 하는 일은 계약 승인 확인과 최종 인수 두 번입니다.
+`--init-run`은 계약 승인과 실행 기준선 동결을 `start` 한 번에 묶고, `feedback`은 검증과 검토 보고서 발행을 묶습니다. `--init-run`은 `--run-id`를 따로 받지 않고 `<task_id>-RUN-001`(예: `CH-T001-RUN-001`)을 자동 생성합니다. 생성된 실행 ID는 `start` 출력의 `실행 ID` 줄이나 `node scripts/crafthelm.mjs status --repo /path/to/repo`로 확인합니다. 사람이 직접 실행하는 단계는 계약 승인과 최종 인수 두 번입니다.
 
 ```bash
 # 1) 인터뷰 + 계약 생성·승인 + 실행 기준선 동결
@@ -119,7 +99,7 @@ node scripts/crafthelm.mjs start "로그인 토큰 만료 비교 연산 오류 �
   --e2e-cmd "node tests/e2e.test.mjs" \
   --approve-contract --actor operator --init-run
 
-# --- 범위(scope.allow) 내 코드 수정 ---
+# --- 범위(scope.allow) 안의 코드를 수정합니다 ---
 
 # 2) 검증 + 검토 보고서 발행 (READY_FOR_HUMAN_REVIEW)
 node scripts/crafthelm.mjs feedback --repo /path/to/repo --run-id CH-T001-RUN-001 --selective
@@ -129,9 +109,9 @@ node scripts/crafthelm.mjs approve record --repo /path/to/repo --run-id CH-T001-
   --decision ACCEPTED --actor human-reviewer --rationale "검증 증빙 확인 완료"
 ```
 
-작은 버그 수정이고 E2E 명령을 마련하기 어렵다면 `--profile lite`를 붙이고 `--e2e-cmd`를 빼는 대신, 변경한 코드를 직접 호출하는 테스트의 실행 명령을 `--test-cmd "<명령>"`으로 넘깁니다. 범용 테스트 명령 하나만으로는 면제를 받을 수 없어서, `--test-cmd`가 없으면 `start`가 계약 승인 전에 멈추고 `contract add-test`로 보완하라고 안내합니다. 변경이 소스 3개 파일·60줄 이내이고 이 전용 테스트가 변경 코드에 닿을 때만 E2E 요구가 면제되며, 조건을 벗어나면 `verify`가 `LITE_PROFILE_EXCEEDED`로 실패합니다. 이 한도는 아직 데이터 없이 정한 초기값입니다. E2E를 둔 버그 수정 실행이 쌓이면 `node scripts/crafthelm.mjs calibrate lite --repo <path>`로 한도 안에서 E2E가 실제로 결함을 잡은 적이 있는지 확인할 수 있습니다.
+작은 버그 수정에서 E2E 명령을 마련하기 어렵다면 `--profile lite`를 붙이고 `--e2e-cmd`를 빼는 대신 변경 코드를 직접 호출하는 테스트 명령을 `--test-cmd "<명령>"`으로 넘깁니다. 범용 테스트 명령 하나만으로는 면제받지 못하며 `--test-cmd`가 빠지면 `start`가 계약 승인 전에 멈추고 `contract add-test`로 보완하라고 알립니다. 변경이 소스 파일 3개와 추가 60줄 이내이고 전용 테스트가 변경 코드에 닿을 때만 E2E 요구를 면제합니다. 범위를 넘기면 `verify`가 `LITE_PROFILE_EXCEEDED`로 실패합니다. 이 기본 한도는 실측 데이터 없이 정한 초기값이므로 E2E를 둔 버그 수정 기록이 쌓이면 `node scripts/crafthelm.mjs calibrate lite --repo <path>`로 한도 안에서 E2E가 결함을 잡은 사례가 있는지 확인합니다.
 
-계약을 먼저 검토하고 싶으면 `--approve-contract`를 빼고 실행한 뒤 안내되는 `contract approve <계약> --actor <이름> --init-run` 명령을 씁니다.
+계약을 먼저 검토하고 승인하려면 `--approve-contract`를 빼고 `start`를 실행한 뒤, 안내되는 `contract approve <계약> --actor <이름> --init-run` 명령을 실행하세요.
 
 ## 주요 명령
 
@@ -139,6 +119,7 @@ node scripts/crafthelm.mjs approve record --repo /path/to/repo --run-id CH-T001-
 npm test
 node scripts/crafthelm.mjs start "작업 설명" --repo <target-repo>
 node scripts/crafthelm.mjs status --repo <target-repo>
+node scripts/crafthelm.mjs status --repo <target-repo> --run-id <run-id> --explain
 npm run doctor:antigravity
 npm run doctor:generic
 npm run doctor:claude
@@ -150,23 +131,30 @@ npm run install:skills
 node scripts/crafthelm.mjs impact --repo . --json
 node scripts/crafthelm.mjs route --task-type classify --host antigravity --json
 node scripts/crafthelm.mjs verify --repo <target-repo> --run-id <run-id> --selective
+node scripts/crafthelm.mjs verify --repo <target-repo> --run-id <run-id> --history
 node scripts/crafthelm.mjs feedback --repo <target-repo> --run-id <run-id> --selective
+node scripts/crafthelm.mjs approve keygen --out ~/.crafthelm/approver.pem --actor release-owner
+node scripts/crafthelm.mjs approve verify --repo <target-repo> --run-id <run-id>
 node scripts/crafthelm.mjs memory decide --title "Rotate refresh tokens" --body "Single-use rotation"
 node scripts/crafthelm.mjs memory search --query "refresh token"
+node scripts/crafthelm.mjs skills list
 node scripts/crafthelm.mjs --help
-node scripts/skills.mjs list
 ```
 
-## Claude Code·Codex·Gemini 스킬 등록
+벤치마크 명령(`benchmark`·`benchmark live --i-accept-cost`)의 비교 기준과 실측 한계는 [벤치마킹 정책](docs/benchmarking.md)에 있습니다. 실측 전까지 토큰·비용 절감 수치는 약속하지 않으며, 측정하지 못한 값은 `"unknown"`으로 기록합니다.
 
-CraftHelm은 Claude Code(`.claude-plugin/plugin.json` 또는 `~/.claude/skills/crafthelm`), Codex(`~/.codex/skills/crafthelm`), Gemini CLI / Antigravity(`gemini-extension.json`, `~/.gemini/skills/crafthelm`, `~/.gemini/config/skills/crafthelm`)에서 각각 단일 공급자 격리 규칙을 지키는 스킬로 등록할 수 있습니다.
+## 스킬 등록과 Claude Code 보호 설정
+
+`init-host --host`와 `doctor --host`는 `claude`, `codex`, `antigravity`, `gemini`, `generic`, 사용자 정의 CLI(`--host custom --cli "<명령>"`)를 지원합니다(`npm run doctor:*`는 `claude`, `codex`, `antigravity`, `generic` 네 단축 스크립트를 제공합니다).
+
+`install-skills --targets`에는 `claude`, `codex`, `gemini`, `antigravity`, `agents`, `all`을 지정합니다. `all`(또는 `claude,codex,gemini`)을 전역(`--scope user`)으로 설치하면 Claude Code(`~/.claude/skills/crafthelm`), Codex(`~/.codex/skills/crafthelm`), Antigravity(`~/.gemini/config/skills/crafthelm`), Gemini CLI(`~/.gemini/skills/crafthelm`) 네 경로에 단일 공급자 격리 규칙을 지키는 스킬을 등록합니다. 프로젝트 범위(`--scope project`)에서는 `<repo>` 아래 `.claude`, `.codex`, `.gemini`, `.agents` 디렉터리에 등록합니다. `--with-kouetsu`를 붙이면 에이전트가 평소 문서 작성에서도 `kouetsu` 스킬을 부를 수 있도록 같은 스킬 폴더 옆에 `kouetsu`를 복사합니다.
 
 ```bash
-# 3개 호스트 전역 일괄 등록 (미리보기: --dry-run, Kouetsu 동반 설치: --with-kouetsu)
+# 3개 타깃(Claude·Codex·Gemini/Antigravity) 전역 등록 (미리보기: --dry-run, Kouetsu 동반 복사: --with-kouetsu)
 node scripts/crafthelm.mjs install-skills --targets claude,codex,gemini --dry-run
 npm run install:skills
 
-# 등록 상태 점검 및 안전 제거 (CraftHelm 관리 디렉터리만 제거)
+# 등록 상태 점검 및 CraftHelm 관리 디렉터리만 안전 제거
 npm run skills:status
 node scripts/crafthelm.mjs install-skills --targets all --uninstall
 
@@ -174,8 +162,20 @@ node scripts/crafthelm.mjs install-skills --targets all --uninstall
 node scripts/crafthelm.mjs install-skills --targets all --scope project --repo <target-repo>
 ```
 
-Claude Code에 설치하면 승인 보호 규칙도 그 범위의 `settings.json`(사용자 범위는 `~/.claude/settings.json`, 프로젝트 범위는 `<repo>/.claude/settings.json`)에 추가합니다. 최종 인수 기록·키 생성 명령은 `deny`, 계약·단계 승인 명령은 `ask`입니다. 규칙은 추가만 하고 기존 규칙은 지우지 않으며, 원하지 않으면 `--skip-claude-permissions`를 붙입니다. `init-host --host claude`도 프로젝트 설정에 같은 규칙을 합칩니다.
+Claude Code에 설치하면 승인 보호 규칙도 해당 범위의 `settings.json`(사용자 범위는 `~/.claude/settings.json`, 프로젝트 범위는 `<repo>/.claude/settings.json`)에 추가합니다. 최종 인수 기록과 키 생성 명령은 `deny`, 계약 승인과 단계 승인 명령은 `ask`로 등록합니다. 기존 규칙은 지우지 않고 추가만 하며 빼고 싶으면 `--skip-claude-permissions`를 붙입니다. `init-host --host claude`도 프로젝트 설정에 같은 규칙을 합칩니다.
 
-프로젝트 범위로 설치하면(`init-host --host claude`, `install-skills --scope project`) 범위 가드 훅도 `<repo>/.claude/settings.json`의 `PreToolUse`에 등록합니다. 실행이 진행 중일 때 `scope.allow` 밖이거나 `scope.protect` 안인 파일을 `Edit`·`Write`로 쓰려 하면 그 자리에서 막고 사유를 에이전트에게 돌려줍니다. 셸 명령으로 쓰는 파일은 훅이 보지 못하므로 최종 판정은 `verify`가 합니다. 원하지 않으면 `--skip-claude-hooks`를 붙입니다. 판정 표와 한계는 [docs/security-policy.md](docs/security-policy.md)에 있습니다. `doctor --host claude`는 규칙이 빠졌거나 설치된 스킬 사본이 현재 체크아웃과 다르면 경고와 다시 실행할 명령을 출력합니다.
+프로젝트 범위로 설치하면(`init-host --host claude`, `install-skills --scope project`) 범위 가드 훅도 `<repo>/.claude/settings.json`의 `PreToolUse`에 등록합니다. 이 훅은 활성 실행이 없어도 실행 디렉터리 산출물(`evidence/review.json`, `inbox/**` 외 전체)과 통제 파일(`.crafthelm/contracts/**`, `.claude/settings.json`, `.claude/settings.local.json`, `.crafthelm/approvers.json`, `.crafthelm/config.json`, `.crafthelm/skills.lock.json`) 쓰기를 즉시 차단합니다. 활성 실행 중에는 `scope.allow` 밖이거나 `scope.protect` 안인 파일의 `Edit`·`Write`·`MultiEdit`·`NotebookEdit` 호출을 막고 사유를 에이전트에게 돌려줍니다. 이때 경로는 심볼릭 링크·대소문자·Windows 짧은 이름과 대체 데이터 스트림까지 파일시스템 기준으로 풀어 비교합니다. 셸 명령으로 쓰는 파일은 훅이 보지 못하므로 최종 판정은 여전히 `verify`가 합니다. 훅 등록을 건너뛰려면 `--skip-claude-hooks`를 붙이세요. 판정 표와 한계는 [보안 정책](docs/security-policy.md)에 있습니다. `doctor --host claude`는 권한 규칙이나 훅이 빠졌거나 설치된 스킬 사본이 현재 체크아웃과 다르면 경고와 복구 명령을 출력합니다.
 
-> 주의: 벤치마크 토큰/비용 절감 수치는 실측 전까지 약속하지 않으며, 미측정 항목은 `unknown`으로 출력합니다.
+## 문서 안내
+
+- [아키텍처](docs/architecture.md): 모듈 구성과 공통 계약 계층
+- [품질 계약과 검증](docs/quality-contract.md): 15개 검증 불변식, 증거 강도, 뮤테이션 검사, 경량 프로필
+- [보안과 범위 가드 정책](docs/security-policy.md): 권한 경계, Claude Code 범위 가드 훅 판정표, 외부 스킬 감사
+- [사람 인수 및 책임 정책](docs/human-review-policy.md): 에이전트 세션 차단, `ed25519` 승인자 서명 정책, 무효화 규칙
+- [워크플로 계약과 상태 머신](docs/workflow-contract.md): 단일 writer 락, 재개, 재계획, 상태 전이 규칙
+- [인터뷰 정책](docs/interview-policy.md): 불확실성 분류, 결정적 질문 생성, 5개 영역 검토 기준
+- [위임 및 모델 라우팅 정책](docs/delegation-policy.md): 4단계 티어 라우팅과 위임 실행 기록
+- [교열 정책](docs/editorial-policy.md): Kouetsu 게이트 역할과 한계
+- [방법론 조합 정책](docs/methodology.md): `lifecycle`·`specification`·`engineering`·`execution` 조합 규칙
+- [벤치마킹 정책](docs/benchmarking.md): 실측 비교군과 측정 한계
+- [서드파티 고지](NOTICE.md): Kouetsu MIT 라이선스와 배포 범위

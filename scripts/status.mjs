@@ -3,6 +3,7 @@ import path from 'node:path';
 import { statusCheckpoint } from './checkpoint.mjs';
 import { checkContractReadiness } from './contract.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
+import { explainRun, formatExplainText } from './lib/explain-run.mjs';
 import { getCheckpointPath, toPosixPath } from './lib/paths.mjs';
 import { STATES } from './lib/state-machine.mjs';
 
@@ -351,7 +352,9 @@ function printUsage() {
     [
       'CraftHelm Status CLI (Inspect Active Run, Pending Contracts & Next Action)',
       '',
-      'Usage: status.mjs [--repo .] [--run-id <id>] [--json]',
+      'Usage: status.mjs [--repo .] [--run-id <id>] [--explain] [--json]',
+      '',
+      '  --explain  Show why the last verify failed: failed checks, their commands, log paths, repair rounds left.',
       '',
     ].join('\n'),
   );
@@ -369,10 +372,14 @@ if (isMainModule(import.meta.url)) {
       repo: args.repo ?? '.',
       runId: args['run-id'],
     });
+    // --explain needs one run: the one named, or the only active one.
+    const explain = args.explain && res.selected_run ? explainRun(res.repo, res.selected_run.run_id) : null;
     if (args.json) {
-      process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify(explain ? { ...res, explain } : res, null, 2)}\n`);
     } else {
       process.stdout.write(formatStatusText(res));
+      if (explain) process.stdout.write(formatExplainText(explain));
+      else if (args.explain) process.stdout.write('--explain은 실행 하나를 대상으로 합니다. --run-id <id>로 실행을 지정하세요.\n');
     }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
