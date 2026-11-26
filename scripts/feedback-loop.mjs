@@ -168,6 +168,7 @@ export async function runFeedbackLoop(options = {}) {
       repo: repoRoot,
       runId,
       contract: contractPath,
+      writer: options.writer,
       cause: causeId,
       check: firstFailed?.id ?? 'unknown',
       command: contract.acceptance.find((a) => a.id === firstFailed?.id)?.command ?? 'not_provided',

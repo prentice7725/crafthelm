@@ -86,6 +86,9 @@ describe('Scope guard: the contract scope applied before the write', () => {
       assert.equal(at('.claude/settings.json').code, 'CONTROL_FILE');
       assert.equal(at('.claude/settings.local.json').code, 'CONTROL_FILE');
       assert.equal(at('.claude/skills/crafthelm/SKILL.md').code, 'OUT_OF_SCOPE');
+      for (const rel of ['.crafthelm/approvers.json', '.crafthelm/config.json', '.crafthelm/skills.lock.json']) {
+        assert.equal(at(rel).code, 'CONTROL_FILE', rel);
+      }
       // git does not track it, so verify would not see it either.
       assert.equal(at('scratch/notes.txt').code, 'GIT_IGNORED');
       // Relative paths resolve against the session directory; a path outside any CraftHelm repo is not ours.
@@ -123,6 +126,53 @@ describe('Scope guard: the contract scope applied before the write', () => {
       assert.equal(at('.crafthelm/runs/OWN-RUN/approvals/decision.json').decision, 'deny');
       assert.equal(at('.crafthelm/contracts/NEXT.json').code, 'CONTROL_FILE');
       assert.equal(at('.claude/settings.json').code, 'CONTROL_FILE');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('compares names the way the disk does: another letter case or a Windows alias is the same file', () => {
+    const repo = makeRepo();
+    try {
+      startRun(repo, 'CASE', 'CASE-RUN', { allow: ['src/**'], protect: ['src/generated/**', 'REVIEW.md'] });
+      fs.mkdirSync(path.join(repo, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(repo, '.claude', 'settings.json'), '{}', 'utf8');
+      const folded = (rel) => evaluateWrite({ filePath: path.join(repo, rel), caseInsensitive: true }).code;
+      // Names that do not exist yet have no on-disk spelling, so both sides are folded.
+      assert.equal(folded('.claude/Settings.Local.json'), 'CONTROL_FILE');
+      assert.equal(folded('.crafthelm/contracts/Next.JSON'), 'CONTROL_FILE');
+      assert.equal(folded('review.md'), 'PROTECTED_PATH');
+      assert.equal(folded('SRC/Generated/New.mjs'), 'PROTECTED_PATH');
+      assert.equal(folded('SRC/New.mjs'), 'IN_SCOPE');
+      assert.equal(folded('.crafthelm/runs/CASE-RUN/Approvals/decision.json'), 'SCRIPT_OWNED_ARTIFACT');
+      // On a case-sensitive disk these are different files, and the scope rule still applies to them.
+      const exact = (rel) => evaluateWrite({ filePath: path.join(repo, rel), caseInsensitive: false, isIgnored: () => false }).code;
+      assert.equal(exact('review.md'), 'OUT_OF_SCOPE');
+      assert.equal(exact('REVIEW.md'), 'PROTECTED_PATH');
+
+      // What this machine's filesystem does, detected rather than assumed.
+      const at = (rel) => evaluateWrite({ filePath: path.join(repo, rel) }).code;
+      if (fs.existsSync(path.join(repo, '.CRAFTHELM'))) {
+        assert.equal(at('.claude/Settings.json'), 'CONTROL_FILE');
+        assert.equal(at('.CRAFTHELM/Contracts/X.json'), 'CONTROL_FILE');
+        assert.equal(at('.crafthelm/Runs/CASE-RUN/approvals/decision.json'), 'SCRIPT_OWNED_ARTIFACT');
+      } else {
+        assert.equal(at('.claude/Settings.json'), 'OUT_OF_SCOPE');
+      }
+      if (process.platform === 'win32') {
+        assert.equal(at('.claude/settings.json.'), 'CONTROL_FILE');
+        assert.equal(at('.claude/settings.json::$DATA'), 'CONTROL_FILE');
+        assert.equal(at('.claude/settings.json '), 'CONTROL_FILE');
+      }
+
+      // A link inside the scope that points at a protected file is judged by its target.
+      let linked = true;
+      try {
+        fs.symlinkSync(path.join(repo, 'src', 'generated'), path.join(repo, 'src', 'alias'), 'junction');
+      } catch {
+        linked = false;
+      }
+      if (linked) assert.equal(at('src/alias/schema.mjs'), 'PROTECTED_PATH');
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

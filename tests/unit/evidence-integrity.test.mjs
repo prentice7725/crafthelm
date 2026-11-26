@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { recordHumanDecision, verifyHumanDecision } from '../../scripts/approval.mjs';
-import { acquireWriterLock, initCheckpoint, releaseWriterLock, resumeRun } from '../../scripts/checkpoint.mjs';
+import { acquireWriterLock, initCheckpoint, recordRepairRound, releaseWriterLock, resumeRun, transitionCheckpoint } from '../../scripts/checkpoint.mjs';
 import { approveContractFile, checkContractReadiness } from '../../scripts/contract.mjs';
 import { findAlteredEvidenceLogs, redactSecrets } from '../../scripts/lib/evidence-io.mjs';
 import { assessEvidenceStrength } from '../../scripts/lib/evidence-strength.mjs';
@@ -12,7 +12,7 @@ import { runGit } from '../../scripts/lib/git.mjs';
 import { getEvidenceManifestPath, getRunDir } from '../../scripts/lib/paths.mjs';
 import { detectTestWeakening } from '../../scripts/lib/test-weakening.mjs';
 import { publishReviewPackage } from '../../scripts/review-package.mjs';
-import { runVerify } from '../../scripts/verify.mjs';
+import { recordBaselineGreen, recordRedEvidence, runVerify } from '../../scripts/verify.mjs';
 
 const SRC = 'export function greet(name) { return `hi ${name}`; }\n';
 const TEST = [
@@ -159,6 +159,12 @@ describe('Run state is not rewritten under another writer, and a bad pattern is 
       );
       assert.throws(() => runVerify({ repo, runId: 'LOCK-RUN', writer: 'builder-2' }), /CONCURRENT_WRITER_BLOCKED/);
       assert.throws(() => publishReviewPackage({ repo, runId: 'LOCK-RUN' }), /CONCURRENT_WRITER_BLOCKED/);
+      // Every entry point that rewrites the checkpoint or the evidence refuses the same way.
+      assert.throws(() => transitionCheckpoint({ repo, runId: 'LOCK-RUN', to: 'PAUSED', reason: 'x' }), /CONCURRENT_WRITER_BLOCKED/);
+      assert.throws(() => recordRepairRound({ repo, runId: 'LOCK-RUN', cause: 'c' }), /CONCURRENT_WRITER_BLOCKED/);
+      assert.throws(() => recordRedEvidence({ repo, runId: 'LOCK-RUN', acId: 'AC-01' }), /CONCURRENT_WRITER_BLOCKED/);
+      assert.throws(() => recordBaselineGreen({ repo, runId: 'LOCK-RUN', acId: 'AC-01' }), /CONCURRENT_WRITER_BLOCKED/);
+      assert.equal(recordBaselineGreen({ repo, runId: 'LOCK-RUN', acId: 'AC-01', writer: 'builder-1' }).ok, true);
       assert.equal(fs.existsSync(getEvidenceManifestPath(repo, 'LOCK-RUN')), false);
       assert.equal(runVerify({ repo, runId: 'LOCK-RUN', writer: 'builder-1' }).ok, true);
       assert.match(acquireWriterLock({ repo, runId: 'LOCK-RUN', writer: 'builder-2' }).message, /release-lock --run-id LOCK-RUN --force/);

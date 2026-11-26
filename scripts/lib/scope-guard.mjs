@@ -39,7 +39,51 @@ const CONTROL_FILES = [
   '.crafthelm/contracts/**',
   '.claude/settings.json',
   '.claude/settings.local.json',
+  // Policy that verify and the approval gate read from the protected base ref. Closed here so an
+  // agent-edited copy cannot slip into the commit that later becomes that base ref.
+  '.crafthelm/approvers.json',
+  '.crafthelm/config.json',
+  '.crafthelm/skills.lock.json',
 ];
+
+/**
+ * Drop the parts of a Windows path that name the same file under another spelling: trailing dots
+ * and spaces on a segment, and an alternate data stream suffix (`settings.json::$DATA`).
+ */
+function stripWindowsAliases(abs) {
+  if (process.platform !== 'win32') return abs;
+  const { root } = path.parse(abs);
+  const segments = abs.slice(root.length).split(/[\\/]+/)
+    .map((segment) => segment.split(':')[0].replace(/[. ]+$/, ''))
+    .filter(Boolean);
+  return path.join(root, ...segments);
+}
+
+/**
+ * The path as the disk spells it: the deepest existing ancestor is resolved through the filesystem
+ * (true letter case, long names instead of 8.3 short names, symlinks followed), and the part that
+ * does not exist yet is appended unchanged.
+ */
+function canonicalPath(abs) {
+  let existing = abs;
+  const pending = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) return abs;
+    pending.unshift(path.basename(existing));
+    existing = parent;
+  }
+  try {
+    return path.join(fs.realpathSync.native(existing), ...pending);
+  } catch {
+    return abs;
+  }
+}
+
+// On a case-insensitive filesystem `.claude/Settings.json` is `.claude/settings.json`.
+function isCaseInsensitive(repoRoot) {
+  return fs.existsSync(path.join(repoRoot, '.CRAFTHELM')) && fs.existsSync(path.join(repoRoot, '.crafthelm'));
+}
 
 function readJsonSafe(filePath) {
   try {
@@ -100,16 +144,22 @@ function isGitIgnored(repoRoot, rel) {
  * @returns {{ decision: 'allow'|'deny', code: string, reason: string, repo?: string, path?: string }}
  */
 export function evaluateWrite(params) {
-  const abs = path.resolve(params.cwd ?? process.cwd(), params.filePath);
+  const abs = canonicalPath(stripWindowsAliases(path.resolve(params.cwd ?? process.cwd(), params.filePath)));
   const repoRoot = findCraftHelmRepo(path.dirname(abs));
   if (!repoRoot) return { decision: 'allow', code: 'NOT_A_CRAFTHELM_REPO', reason: 'no .crafthelm directory above this path' };
   const rel = toPosixPath(path.relative(repoRoot, abs));
   const allow = (code, reason) => ({ decision: 'allow', code, reason, repo: repoRoot, path: rel });
   const deny = (code, reason) => ({ decision: 'deny', code, reason, repo: repoRoot, path: rel });
 
-  const runFile = /^\.crafthelm\/runs\/([^/]+)\/(.+)$/.exec(rel);
+  // Paths and patterns are compared the way the filesystem compares names. A file that does not
+  // exist yet has no on-disk spelling to recover, so on a case-insensitive disk both sides are folded.
+  const fold = (params.caseInsensitive ?? isCaseInsensitive(repoRoot)) ? (text) => text.toLowerCase() : (text) => text;
+  const key = fold(rel);
+  const matches = (target, patterns) => matchesAnyGlob(target, patterns.map(fold));
+
+  const runFile = /^\.crafthelm\/runs\/([^/]+)\/(.+)$/.exec(key);
   if (runFile) {
-    if (matchesAnyGlob(runFile[2], AGENT_AUTHORED_RUN_FILES)) {
+    if (matches(runFile[2], AGENT_AUTHORED_RUN_FILES)) {
       return allow('RUN_WORKSPACE', 'run directory file an agent is meant to author');
     }
     return deny(
@@ -117,7 +167,7 @@ export function evaluateWrite(params) {
       `${rel} is written only by CraftHelm scripts (verify, checkpoint, delegate, review-package, approve). Run the script instead of editing its output; a human acceptance record is never written by an agent.`,
     );
   }
-  if (matchesAnyGlob(rel, CONTROL_FILES)) {
+  if (matches(key, CONTROL_FILES)) {
     return deny(
       'CONTROL_FILE',
       `${rel} decides what this session may do, so file tools do not write it. Change a contract through the contract commands (contract add-e2e, add-test, approve) or a new interview; settings are edited by a person.`,
@@ -127,14 +177,14 @@ export function evaluateWrite(params) {
   const scopes = listActiveScopes(repoRoot);
   if (scopes.length === 0) return allow('NO_ACTIVE_RUN', 'no run in progress');
 
-  const protectedBy = scopes.filter((s) => matchesAnyGlob(rel, s.protect));
+  const protectedBy = scopes.filter((s) => matches(key, s.protect));
   if (protectedBy.length > 0) {
     return deny(
       'PROTECTED_PATH',
       `${rel} is under scope.protect of ${protectedBy.map((s) => s.task_id).join(', ')}. verify would fail with PROTECTED_PATH_VIOLATION. Leave it unchanged, or stop and ask for the contract to be re-planned.`,
     );
   }
-  if (scopes.some((s) => matchesAnyGlob(rel, s.allow))) return allow('IN_SCOPE', 'inside scope.allow');
+  if (scopes.some((s) => matches(key, s.allow))) return allow('IN_SCOPE', 'inside scope.allow');
 
   // verify reads the tree through git, so an ignored file is outside what it checks.
   if ((params.isIgnored ?? isGitIgnored)(repoRoot, rel)) return allow('GIT_IGNORED', 'ignored by git, not part of the verified tree');

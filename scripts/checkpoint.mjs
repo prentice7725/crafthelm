@@ -358,6 +358,7 @@ export function transitionCheckpoint(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const toState = options.to;
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'change the state of');
   const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
   const { contract } = loadContractForRun(repoRoot, checkpoint.task_id, options.contract);
 
@@ -388,6 +389,7 @@ export function recordRepairRound(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const causeId = options.cause ?? 'default_cause';
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'record a repair round for');
   const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
   const { contract } = loadContractForRun(repoRoot, checkpoint.task_id, options.contract);
 
@@ -748,8 +750,8 @@ if (isMainModule(import.meta.url)) {
     else if (sub === 'release-lock') out = releaseWriterLock({ repo: args.repo, runId: args['run-id'], writer: args.writer, force: Boolean(args.force) });
     else if (sub === 'stage') out = recordStage({ repo: args.repo, runId: args['run-id'], stage: args.stage ?? args._[1], status: args.status, contract: args.contract, writer: args.writer });
     else if (sub === 'approve-stage') out = approveStage({ repo: args.repo, runId: args['run-id'], stage: args.stage ?? args._[1], actor: args.actor, rationale: args.rationale });
-    else if (sub === 'transition') out = transitionCheckpoint({ repo: args.repo, runId: args['run-id'], to: args.to, reason: args.reason, contract: args.contract });
-    else if (sub === 'record-repair') out = recordRepairRound({ repo: args.repo, runId: args['run-id'], cause: args.cause, check: args.check, command: args.command, note: args.note, contract: args.contract });
+    else if (sub === 'transition') out = transitionCheckpoint({ repo: args.repo, runId: args['run-id'], to: args.to, reason: args.reason, contract: args.contract, writer: args.writer });
+    else if (sub === 'record-repair') out = recordRepairRound({ repo: args.repo, runId: args['run-id'], cause: args.cause, check: args.check, command: args.command, note: args.note, contract: args.contract, writer: args.writer });
     else if (sub === 'resume') out = resumeRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, docsDir: args['docs-dir'], writer: args.writer });
     else if (sub === 'handoff') out = createHandoff({ repo: args.repo, runId: args['run-id'], docsDir: args['docs-dir'] });
     else if (sub === 'replan') out = replanRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, reason: args.reason, writer: args.writer });

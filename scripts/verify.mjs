@@ -324,6 +324,7 @@ export function recordRedEvidence(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const acId = options.acId;
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'record RED evidence for');
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
   const contract = readJson(options.contract ? path.resolve(options.contract) : getContractPath(repoRoot, checkpoint.task_id));
@@ -372,6 +373,7 @@ export function recordBaselineGreen(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const acId = options.acId;
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'record baseline evidence for');
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
   const contract = readJson(options.contract ? path.resolve(options.contract) : getContractPath(repoRoot, checkpoint.task_id));
@@ -1108,6 +1110,7 @@ if (isMainModule(import.meta.url)) {
         runId: args['run-id'],
         acId: args['record-red'],
         contract: args.contract,
+        writer: typeof args.writer === 'string' ? args.writer : undefined,
       });
     } else if (args['record-baseline-green']) {
       res = recordBaselineGreen({
@@ -1115,6 +1118,7 @@ if (isMainModule(import.meta.url)) {
         runId: args['run-id'],
         acId: args['record-baseline-green'],
         contract: args.contract,
+        writer: typeof args.writer === 'string' ? args.writer : undefined,
       });
     } else {
       res = runVerify({
