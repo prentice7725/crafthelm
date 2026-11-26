@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256File } from './lib/crypto.mjs';
+import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest } from './lib/git.mjs';
 import { runEditorialCheck, verifyKouetsuAsset } from './lib/kouetsu-check.mjs';
 import {
@@ -21,10 +22,7 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function writeJson(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-}
+const writeJson = writeJsonAtomic;
 
 function relFromReports(runRelPath) {
   if (!runRelPath) return 'none';
@@ -90,6 +88,9 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     SINGLE_GENERIC_CHECK: ['실행된 검사가 범용 테스트 명령 하나뿐임', '이번 요청을 직접 단언하는 테스트가 있는지 확인'],
     NO_TEST_CHANGED: ['동작이 바뀌었는데 추가되거나 수정된 테스트가 없음', '기존 테스트가 새 동작을 단언하는지 확인하거나 테스트 추가 요청'],
     MUTANTS_SURVIVED: ['변경된 줄을 일부러 깨뜨렸는데도 통과한 검사가 실패하지 않은 경우가 있음', '`evidence/mutation-probe.json`의 살아남은 변이를 확인하고 해당 줄을 단언하는 테스트 요청'],
+    TEST_FILE_DELETED: ['이번 변경에서 테스트 파일이 삭제됨', '삭제된 테스트가 더 이상 필요 없는 것인지, 통과하지 못해 지운 것인지 확인'],
+    TEST_SKIP_ADDED: ['테스트 파일에 skip·only·todo 표시가 추가됨', '실패하던 테스트를 꺼서 통과시킨 것이 아닌지 확인'],
+    ASSERTIONS_REMOVED: ['테스트 파일에서 단언문이 추가된 것보다 많이 삭제됨', '삭제된 단언이 이번 요청과 관련된 것인지 패치에서 확인'],
     IMPACT_INCONCLUSIVE: ['영향도 분석이 그래프를 만들지 못해 테스트 도달 여부를 알 수 없음', '변경된 코드 경로를 표본으로 직접 확인'],
   };
   const strengthSummary = strength.signals.length > 0
@@ -131,7 +132,8 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
   }
   for (const sig of strength.signals) {
     const [what, action] = strengthKo[sig.code] ?? [sig.detail, sig.human_check];
-    riskRows.push(`| ${sig.weight === 'weak' ? 'medium' : 'low'} | 증거 강도 신호 (${sig.code}): ${what} | PASS가 이번 변경을 충분히 보증하지 못할 수 있음 | ${action} | 승인자 |`);
+    const where = sig.refs?.length ? ` (${sig.refs.map((f) => `\`${f}\``).join(', ')})` : '';
+    riskRows.push(`| ${sig.weight === 'weak' ? 'medium' : 'low'} | 증거 강도 신호 (${sig.code}): ${what}${where} | PASS가 이번 변경을 충분히 보증하지 못할 수 있음 | ${action} | 승인자 |`);
   }
   for (const item of unverifiedList) {
     riskRows.push(`| medium | 미검증 항목: ${item} | 사람이 직접 확인하지 않으면 누락 위험 | 승인 전 직접 확인 수행 | 승인자 |`);
@@ -384,6 +386,17 @@ export function publishReviewPackage(options) {
       technical_status: manifest.technical_status,
       failure_reasons: manifest.failure_reasons ?? [],
       message: `Cannot publish acceptance review package when technical_status is ${manifest.technical_status}.`,
+    };
+  }
+
+  // The logs were written by verify; a log edited since then no longer backs the status it is cited for.
+  const alteredLogs = findAlteredEvidenceLogs(runDir, manifest);
+  if (alteredLogs.length > 0) {
+    return {
+      ok: false,
+      error_code: 'EVIDENCE_LOG_ALTERED',
+      altered_logs: alteredLogs,
+      message: 'Stored check output no longer matches the hash recorded by verify; re-run verify.mjs before publishing review package.',
     };
   }
 

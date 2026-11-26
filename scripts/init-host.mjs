@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
 import { SKILL_MODULES, renderHostSkillMarkdown } from './install-skills.mjs';
+import { applyClaudeScopeHook } from './lib/claude-hooks.mjs';
 import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { collectRelativeFiles } from './lib/crypto.mjs';
@@ -74,6 +75,7 @@ export function initHost(options = {}) {
   const written = [];
   const skipped = [];
   let claudePermissions = null;
+  let claudeScopeHook = null;
 
   const universalKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'universal', 'skills', 'kouetsu');
   const codexKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'codex', 'skills', 'kouetsu');
@@ -172,6 +174,13 @@ export function initHost(options = {}) {
       claudePermissions = applyClaudePermissionGuards({ settingsPath: path.join(repoRoot, '.claude', 'settings.json') });
       if (claudePermissions.action === 'ADDED') written.push(claudePermissions.settings_path);
     }
+    // The scope guard blocks a write outside the active contract's scope before it happens.
+    if (!options.skipClaudeHooks) {
+      claudeScopeHook = applyClaudeScopeHook({ settingsPath: path.join(repoRoot, '.claude', 'settings.json') });
+      if (['ADDED', 'UPDATED'].includes(claudeScopeHook.action) && !written.includes(claudeScopeHook.settings_path)) {
+        written.push(claudeScopeHook.settings_path);
+      }
+    }
   }
 
   if (isAll || normHost === 'codex') {
@@ -200,6 +209,7 @@ export function initHost(options = {}) {
     written,
     skipped,
     ...(claudePermissions ? { claude_permissions: claudePermissions } : {}),
+    ...(claudeScopeHook ? { claude_scope_hook: claudeScopeHook } : {}),
   };
 }
 
@@ -208,7 +218,7 @@ function printUsage() {
     [
       'CraftHelm Host Initializer CLI',
       '',
-      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--skip-claude-permissions] [--force]',
+      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--skip-claude-permissions] [--skip-claude-hooks] [--force]',
       '',
       'With --host claude|all, approval guard rules are merged into <repo>/.claude/settings.json (added, never removed).',
       '',
@@ -236,6 +246,7 @@ if (isMainModule(import.meta.url)) {
       customAnalyzer: args['custom-analyzer'],
       force: Boolean(args.force),
       skipClaudePermissions: Boolean(args['skip-claude-permissions']),
+      skipClaudeHooks: Boolean(args['skip-claude-hooks']),
     });
     process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
   } catch (err) {

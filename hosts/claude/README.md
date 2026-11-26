@@ -6,4 +6,5 @@ Claude-only 환경에서 CraftHelm을 실행하기 위한 네이티브 어댑터
 - `~/.claude/plugins/`의 `kouetsu@1.0.2`를 읽기 전용으로 검증합니다.
 - `codex` 또는 다른 공급자 CLI를 절대 호출하지 않습니다.
 - `settings.example.json`의 권한 규칙은 에이전트의 최종 인수 기록(`approve record`)과 승인자 키 생성(`approve keygen`)을 `deny`로 막고, 계약 승인과 Waterfall 단계 승인은 `ask`로 사용자 확인을 받습니다. 이 승인 관련 규칙은 `install-skills --targets claude`와 `init-host --host claude`가 실제 `settings.json`에 추가하고(`--skip-claude-permissions`로 생략), `doctor --host claude`가 빠진 규칙과 오래된 스킬 사본을 경고합니다.
+- 범위 가드 훅(`scripts/hooks/scope-guard.mjs`)은 `Edit`·`Write`·`MultiEdit`·`NotebookEdit` 호출 전에 실행되어, 진행 중인 실행의 `scope.allow` 밖이거나 `scope.protect` 안인 파일 쓰기를 막습니다. `init-host --host claude`와 `install-skills --targets claude --scope project`가 프로젝트의 `.claude/settings.json`에 `PreToolUse` 훅으로 등록하고(`--skip-claude-hooks`로 생략), `doctor --host claude --repo <repo>`가 빠졌거나 다른 경로를 가리키는 등록을 경고합니다. 조건과 한계는 `docs/security-policy.md`에 있습니다.
 - 단일 모델 제한 시 순차 독립 컨텍스트로 강등하고 `independent_cross_model_review: "UNVERIFIED"`를 명시합니다.

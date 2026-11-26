@@ -20,7 +20,23 @@ export function toPosixPath(inputPath) {
 }
 
 /**
- * Convert a glob pattern (`**`, `*`, `?`) into a RegExp.
+ * Name glob syntax this matcher does not implement. Such a pattern is matched literally, so it
+ * silently matches nothing: harmless in `scope.allow`, but in `scope.protect` it protects nothing.
+ * Square brackets are not reported: they are literal on purpose (`pages/[id].tsx`).
+ * @param {string} pattern
+ * @returns {string|null} what is unsupported, or null
+ */
+export function unsupportedGlobSyntax(pattern) {
+  const norm = toPosixPath(pattern);
+  if (norm.startsWith('!')) return 'negation ("!pattern")';
+  if (/\{[^{}/]*,[^{}]*\}/.test(norm)) return 'brace alternation ("{a,b}")';
+  return null;
+}
+
+/**
+ * Convert a glob pattern into a RegExp. Supported: `**` (any depth), `*` (within one segment),
+ * `?` (one character), and a trailing `/` (everything under that directory, see `matchGlob`).
+ * Everything else is literal, including `[]`, `{}` and a leading `!`.
  * @param {string} pattern
  * @returns {RegExp}
  */

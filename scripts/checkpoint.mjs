@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
+import { writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest, getChangedFiles, getGitHead, isGitRepo } from './lib/git.mjs';
 import { buildHandoffPacket } from './lib/handoff.mjs';
 import { INTERVIEW_DOCS, withArtifactLock, writeAtomic } from './lib/task-artifacts.mjs';
@@ -24,10 +25,7 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function writeJson(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-}
+const writeJson = writeJsonAtomic;
 
 function computeFileMapHashes(repoRoot, patterns) {
   const result = {};

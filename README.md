@@ -35,16 +35,36 @@ CraftHelm은 **단일 AI 공급자·단일 AI 호스트(Claude Code, Codex, Anti
 - 보호된 `policy_base_ref` 기반 실행 검증(`fast`/`unit`/`e2e`/`property`/`differential`), Diff-Triggered Reliability Rules(`observe`/`enforce`), 스냅샷 `STALE` 탐지
 - Kouetsu 1.0.2 감사·Pinning 및 Review Package 교열·링크/AC 교차 검증 게이트
 - 명시적 인간 결정 레코드(`approval.mjs`) 및 코드/보고서 변경 시 승인 효력 무효화 검증
-- 뮤테이션 검사(`verify --mutation-probe`): 변경된 줄을 깨뜨려 통과한 검사가 실패하는지 확인하는 결정적 교차 검증 대체 수단. 검사 도중 중단되면 다음 `verify`가 저널을 검증해 원본을 복원하고, 그사이 파일이 바뀌었으면 복원하지 않고 `probe_recovery`에 기록
+- 뮤테이션 검사(`verify --mutation-probe`): 변경된 줄을 깨뜨려(연산자 뒤집기, JS/TS·Python은 문장 삭제 포함) 통과한 검사가 실패하는지 확인하는 결정적 교차 검증 대체 수단. 검사 도중 중단되면 다음 `verify`가 저널을 검증해 원본을 복원하고, 그사이 파일이 바뀌었으면 복원하지 않고 `probe_recovery`에 기록
 - 실측 벤치마크(`benchmark live --i-accept-cost`): 호스트 CLI가 보고한 토큰·비용으로 A/B/C 비교
 - 위임 실행 기록(`delegate run|record`): 어댑터로 워커를 실제 실행해 사용량을 실측하거나 세션 내 워커 결과 패킷을 접수, 기록이 없으면 `UNOBSERVED` 표기
 - 결정적 인터뷰 질문 생성(`interview_questions.md`)과 영역별 검토 여부(`uncertainty_coverage`), 엄격 모드(`--strict-interview`)
-- 증거 강도 등급(`evidence_strength`): 통과한 검사가 이번 변경을 실제로 다루는지 기계적으로 판정해 검토 보고서에 표시
+- 증거 강도 등급(`evidence_strength`): 통과한 검사가 이번 변경을 실제로 다루는지 기계적으로 판정해 검토 보고서에 표시. 테스트 파일 삭제, skip·only 추가, 단언 삭제도 신호로 잡음
+- 증거 로그 대조: `verify`가 저장한 검사 출력의 SHA-256을 매니페스트에 남기고, 보고서 발행과 승인 기록 전에 다시 대조(`EVIDENCE_LOG_ALTERED`). 저장 전 시크릿으로 보이는 값은 가림
 - 작은 작업용 단축 흐름: `start --init-run`(계약 승인 + 기준선 동결), `feedback`(검증 + 보고서 발행)
 - 경량 프로필(`--profile lite`): 작은 버그 수정에 한한 E2E 조건부 면제, 조건 초과 시 `LITE_PROFILE_EXCEEDED`. 변경 코드를 직접 호출하는 전용 테스트(`--test-cmd`, `contract add-test`)가 있어야 면제되며, `calibrate lite`로 한도를 실측 데이터와 대조
 - 승인 게이트: 에이전트 세션·비대화형 실행 차단, 신원 등급 표기, 보호된 승인자 정책(`.crafthelm/approvers.json`) 기반 ed25519 서명 승인
 - E01~E04, E10 결정적 벤치마크 하네스와 실측 A/B/C 하네스 (미측정 항목은 `"unknown"`으로 기록)
 - GitHub Actions CI: 모든 PR과 `main` 푸시에서 Ubuntu·Windows, Node 24로 `npm test` 실행
+
+## 에이전트의 보고를 믿지 않는 지점
+
+검사는 에이전트가 아니라 `verify` 스크립트가 직접 실행하고, 출력과 종료 코드를 실행 디렉터리에 남깁니다. 에이전트가 "통과했다"고 쓴 문장은 어디에도 근거로 쓰이지 않습니다.
+
+| 에이전트가 하는 일 | 걸리는 곳 | 결과 |
+|---|---|---|
+| 실행하지 않은 테스트를 통과했다고 보고 | `verify`가 계약의 명령을 직접 실행 | 종료 코드가 다르면 `AC_FAILED` |
+| 계약에 없는 파일을 함께 수정 | `scope.allow`·`scope.protect`와 diff 대조. Claude Code에서는 범위 가드 훅이 쓰기 전에 차단 | `SCOPE_VIOLATION`, `PROTECTED_PATH_VIOLATION` |
+| 증거 파일이나 승인 레코드를 직접 작성 | 범위 가드 훅 (Claude Code) | 파일 도구 호출이 차단됨 (`SCRIPT_OWNED_ARTIFACT`) |
+| 검증 규칙이나 계약을 고쳐서 통과 | 정책은 `policy_base_ref`에서 읽고 계약은 해시로 고정 | 변조 탐지, `CONTRACT_HASH_MISMATCH` |
+| 실패하는 테스트를 끄거나 지워서 통과 | 테스트 파일 diff | 증거 강도 `weak` (`TEST_FILE_DELETED`, `TEST_SKIP_ADDED`, `ASSERTIONS_REMOVED`) |
+| 변경을 건드리지 않는 테스트만 통과 | 영향도 분석, 뮤테이션 검사 | 증거 강도 `weak` (`NO_TEST_REACHES_CHANGE`, `MUTANTS_SURVIVED`) |
+| 검증 뒤에 코드나 로그를 수정 | 스냅샷 해시, 로그 해시 | `STALE_SNAPSHOT`, `EVIDENCE_LOG_ALTERED` |
+| 스스로 인수 승인 | 에이전트 세션·비대화형 실행 차단 | 승인 레코드가 생성되지 않음 |
+
+증거 강도 신호는 검증을 실패시키지 않고 검토 보고서의 위험 항목으로 올라갑니다. 낡은 테스트를 지우는 정당한 변경과 구별할 수 없어서 판단은 승인자에게 남깁니다. 단, 경량 프로필에서는 `weak` 등급이면 E2E 면제가 취소됩니다. 각 항목의 조건과 한계는 [docs/quality-contract.md](docs/quality-contract.md)에 있습니다.
+
+요구 런타임은 Node.js 24 이상입니다. 외부 패키지 없이 `node:sqlite`와 `node:test`를 쓰기 때문이며, 낮은 버전에서 실행하면 CLI가 필요한 버전을 한 줄로 알려 주고 멈춥니다.
 
 ## 빠른 시작 (작은 버그 수정 예제)
 
@@ -153,6 +173,8 @@ node scripts/crafthelm.mjs install-skills --targets all --uninstall
 node scripts/crafthelm.mjs install-skills --targets all --scope project --repo <target-repo>
 ```
 
-Claude Code에 설치하면 승인 보호 규칙도 그 범위의 `settings.json`(사용자 범위는 `~/.claude/settings.json`, 프로젝트 범위는 `<repo>/.claude/settings.json`)에 추가합니다. 최종 인수 기록·키 생성 명령은 `deny`, 계약·단계 승인 명령은 `ask`입니다. 규칙은 추가만 하고 기존 규칙은 지우지 않으며, 원하지 않으면 `--skip-claude-permissions`를 붙입니다. `init-host --host claude`도 프로젝트 설정에 같은 규칙을 합칩니다. `doctor --host claude`는 규칙이 빠졌거나 설치된 스킬 사본이 현재 체크아웃과 다르면 경고와 다시 실행할 명령을 출력합니다.
+Claude Code에 설치하면 승인 보호 규칙도 그 범위의 `settings.json`(사용자 범위는 `~/.claude/settings.json`, 프로젝트 범위는 `<repo>/.claude/settings.json`)에 추가합니다. 최종 인수 기록·키 생성 명령은 `deny`, 계약·단계 승인 명령은 `ask`입니다. 규칙은 추가만 하고 기존 규칙은 지우지 않으며, 원하지 않으면 `--skip-claude-permissions`를 붙입니다. `init-host --host claude`도 프로젝트 설정에 같은 규칙을 합칩니다.
+
+프로젝트 범위로 설치하면(`init-host --host claude`, `install-skills --scope project`) 범위 가드 훅도 `<repo>/.claude/settings.json`의 `PreToolUse`에 등록합니다. 실행이 진행 중일 때 `scope.allow` 밖이거나 `scope.protect` 안인 파일을 `Edit`·`Write`로 쓰려 하면 그 자리에서 막고 사유를 에이전트에게 돌려줍니다. 셸 명령으로 쓰는 파일은 훅이 보지 못하므로 최종 판정은 `verify`가 합니다. 원하지 않으면 `--skip-claude-hooks`를 붙입니다. 판정 표와 한계는 [docs/security-policy.md](docs/security-policy.md)에 있습니다. `doctor --host claude`는 규칙이 빠졌거나 설치된 스킬 사본이 현재 체크아웃과 다르면 경고와 다시 실행할 명령을 출력합니다.
 
 > 주의: 벤치마크 토큰/비용 절감 수치는 실측 전까지 약속하지 않으며, 미측정 항목은 `unknown`으로 출력합니다.

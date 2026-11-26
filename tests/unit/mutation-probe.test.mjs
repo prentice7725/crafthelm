@@ -140,9 +140,54 @@ describe('Mutation Probe: do the passing checks actually constrain the change?',
         '',
       ].join('\n');
       const planned = planMutants({ repoRoot: repo, diffText, sourceFiles: ['src/msg.mjs'] });
-      // Line 2 is mutated in the code, not in the string; line 3 has no operator outside string and comment.
-      assert.deepEqual(planned.map((m) => [m.line, m.operator, m.column]), [[2, 'eq_strict_flip', 8]]);
+      // Line 2 is mutated in the code, not in the string. Line 3 has no operator outside string and
+      // comment, so it is probed by removing the statement instead.
+      assert.deepEqual(planned.map((m) => [m.line, m.operator, m.column]), [[2, 'eq_strict_flip', 8], [3, 'line_delete', 2]]);
       assert.equal(planned[0].mutated, 'if (n !== 0) return "n === 0 is true";');
+      assert.equal(planned[1].mutated, '(line removed)');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('removes a whole statement only where the file still loads without it', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-delete-'));
+    const plan = (file, lines) => {
+      fs.writeFileSync(path.join(repo, file), `${lines.join('\n')}\n`, 'utf8');
+      const diffText = [`diff --git a/${file} b/${file}`, '--- /dev/null', `+++ b/${file}`, `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`), ''].join('\n');
+      return planMutants({ repoRoot: repo, diffText, sourceFiles: [file], maxMutants: 50 }).map((m) => [m.line, m.operator, m.mutated]);
+    };
+    try {
+      assert.deepEqual(plan('audit.mjs', [
+        'export const LIMIT = 3;',
+        'export function record(log, entry) {',
+        '  log.push(entry);',
+        '  notify(entry, {',
+        '    urgent: entry.level,',
+        '  });',
+        "  'use strict';",
+        '  return log',
+        '  if (log.length > LIMIT) log.shift();',
+        '}',
+      ]), [
+        // The operator flip comes first; exports, open or closing brackets, string-only statements
+        // and lines without a terminating semicolon are left alone.
+        [9, 'gt_to_gte', 'if (log.length >= LIMIT) log.shift();'],
+        [3, 'line_delete', '(line removed)'],
+      ]);
+      assert.deepEqual(plan('audit.py', [
+        'def record(log, entry):',
+        '    """Append and notify."""',
+        '    log.append(entry)',
+        '    notify(entry,',
+        '           urgent=1)',
+        '    return log  # the caller chains on it',
+      ]), [
+        [3, 'line_delete', 'pass'],
+        [6, 'line_delete', 'pass'],
+      ]);
+      // A compiled language gets no statement removal: a missing return is a build error, not a caught bug.
+      assert.deepEqual(plan('audit.go', ['func record(log []string) []string {', '\treturn log;', '}']), []);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
