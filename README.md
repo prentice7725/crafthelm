@@ -22,7 +22,9 @@ CraftHelm은 **단일 AI 공급자·단일 AI 호스트(Claude Code, Codex, Anti
 | Editorial Review | Kouetsu | 문장 명확성·모순·누락·표면 패턴을 점검(코드/사실 검증이 아님) |
 | Human Acceptance | 지정 사람/승인자 | 최종 인수 승인·수정 요청·반려·추가 검증을 결정하고 책임을 짐 |
 
-## 현재 구현 범위 (M0)
+## 현재 구현 범위
+
+`main` 기준으로 동작하는 기능입니다.
 
 - 13개 JSON Schema 계약 (`contracts/schemas/*.schema.json`)
 - Claude / Codex / Antigravity(`agy`·IDE 세션) / Gemini / Generic·커스텀 CLI 단일 공급자 호스트 어댑터 및 `doctor` 환경 탐지
@@ -33,15 +35,16 @@ CraftHelm은 **단일 AI 공급자·단일 AI 호스트(Claude Code, Codex, Anti
 - 보호된 `policy_base_ref` 기반 실행 검증(`fast`/`unit`/`e2e`/`property`/`differential`), Diff-Triggered Reliability Rules(`observe`/`enforce`), 스냅샷 `STALE` 탐지
 - Kouetsu 1.0.2 감사·Pinning 및 Review Package 교열·링크/AC 교차 검증 게이트
 - 명시적 인간 결정 레코드(`approval.mjs`) 및 코드/보고서 변경 시 승인 효력 무효화 검증
-- 뮤테이션 검사(`verify --mutation-probe`): 변경된 줄을 깨뜨려 통과한 검사가 실패하는지 확인하는 결정적 교차 검증 대체 수단
+- 뮤테이션 검사(`verify --mutation-probe`): 변경된 줄을 깨뜨려 통과한 검사가 실패하는지 확인하는 결정적 교차 검증 대체 수단. 검사 도중 중단되면 다음 `verify`가 저널을 검증해 원본을 복원하고, 그사이 파일이 바뀌었으면 복원하지 않고 `probe_recovery`에 기록
 - 실측 벤치마크(`benchmark live --i-accept-cost`): 호스트 CLI가 보고한 토큰·비용으로 A/B/C 비교
 - 위임 실행 기록(`delegate run|record`): 어댑터로 워커를 실제 실행해 사용량을 실측하거나 세션 내 워커 결과 패킷을 접수, 기록이 없으면 `UNOBSERVED` 표기
 - 결정적 인터뷰 질문 생성(`interview_questions.md`)과 영역별 검토 여부(`uncertainty_coverage`), 엄격 모드(`--strict-interview`)
 - 증거 강도 등급(`evidence_strength`): 통과한 검사가 이번 변경을 실제로 다루는지 기계적으로 판정해 검토 보고서에 표시
 - 작은 작업용 단축 흐름: `start --init-run`(계약 승인 + 기준선 동결), `feedback`(검증 + 보고서 발행)
-- 경량 프로필(`--profile lite`): 작은 버그 수정에 한한 E2E 조건부 면제, 조건 초과 시 `LITE_PROFILE_EXCEEDED`
+- 경량 프로필(`--profile lite`): 작은 버그 수정에 한한 E2E 조건부 면제, 조건 초과 시 `LITE_PROFILE_EXCEEDED`. 변경 코드를 직접 호출하는 전용 테스트(`--test-cmd`, `contract add-test`)가 있어야 면제되며, `calibrate lite`로 한도를 실측 데이터와 대조
 - 승인 게이트: 에이전트 세션·비대화형 실행 차단, 신원 등급 표기, 보호된 승인자 정책(`.crafthelm/approvers.json`) 기반 ed25519 서명 승인
 - E01~E04, E10 결정적 벤치마크 하네스와 실측 A/B/C 하네스 (미측정 항목은 `"unknown"`으로 기록)
+- GitHub Actions CI: 모든 PR과 `main` 푸시에서 Ubuntu·Windows, Node 24로 `npm test` 실행
 
 ## 빠른 시작 (작은 버그 수정 예제)
 
