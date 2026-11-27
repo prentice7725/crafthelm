@@ -19,6 +19,9 @@ import { isGitRepo, readFileAtRef } from './git.mjs';
 export const VERIFICATION_TYPES = Object.freeze({
   EXPLICIT_INPUT: 'local_explicit_input_not_identity_verified',
   TTY_CONFIRMED: 'local_tty_confirmed_not_identity_verified',
+  // Decided in the review page a person opened from their own terminal. Like the two above it
+  // says how the decision was entered, not who entered it.
+  REVIEW_PAGE: 'local_review_page_not_identity_verified',
   SIGNED: 'signed_ed25519',
 });
 

@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CraftHelm 검토</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --soft: #f0efea; --line: #dddbd2; --line-strong: #c4c1b6;
+  --text: #1c1b18; --text-2: #5c5a53; --text-3: #8a877e;
+  --ok-bg: #e6f2e1; --ok: #2f5d12; --warn-bg: #f8ecd4; --warn: #7a4a08; --bad-bg: #f9e3e1; --bad: #8f2420;
+  --info-bg: #e3edf8; --info: #174f8a; --primary: #1c1b18; --on-primary: #ffffff;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171614; --panel: #201f1c; --soft: #2a2925; --line: #37352f; --line-strong: #4b4841;
+    --text: #edebe4; --text-2: #b1aea4; --text-3: #85827a;
+    --ok-bg: #1f3513; --ok: #a9d488; --warn-bg: #3d2c0d; --warn: #efc479; --bad-bg: #44191a; --bad: #f1a29d;
+    --info-bg: #14304f; --info: #9dc4ee; --primary: #edebe4; --on-primary: #171614;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 17px; font-weight: 600; margin: 0; }
+header .sub { color: var(--text-2); font-size: 13px; }
+.spacer { flex: 1; }
+main { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; padding: 20px 24px 60px; max-width: 1400px; margin: 0 auto; align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.group-head { padding: 10px 14px; font-size: 13px; color: var(--text-2); display: flex; align-items: center; gap: 8px; }
+.group-head b { color: var(--text); font-weight: 600; }
+.group-head button { margin-left: auto; }
+.run { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; padding: 10px 14px; border-top: 1px solid var(--line); cursor: pointer; }
+.run:hover, .run.current { background: var(--soft); }
+.run .id { font: 12px var(--mono); color: var(--text-3); }
+.run .req { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run .tags { grid-column: 2; display: flex; gap: 6px; flex-wrap: wrap; }
+.pill { font-size: 12px; padding: 1px 8px; border-radius: 6px; white-space: nowrap; background: var(--soft); color: var(--text-2); }
+.pill.ok { background: var(--ok-bg); color: var(--ok); } .pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); } .pill.info { background: var(--info-bg); color: var(--info); }
+#detail { padding: 20px 24px; min-height: 240px; }
+#detail h2 { font-size: 18px; font-weight: 600; margin: 0; line-height: 1.4; }
+.meta { color: var(--text-2); font-size: 13px; margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+.plus { color: var(--ok); } .minus { color: var(--bad); }
+.notice { margin-top: 14px; padding: 10px 14px; border-radius: 8px; font-size: 14px; background: var(--warn-bg); color: var(--warn); }
+.notice.bad { background: var(--bad-bg); color: var(--bad); }
+h3 { font-size: 12px; font-weight: 600; color: var(--text-3); margin: 22px 0 8px; letter-spacing: 0.02em; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+td { padding: 8px 10px 8px 0; border-top: 1px solid var(--line); vertical-align: top; }
+td.rid { font: 12px var(--mono); color: var(--text-3); width: 76px; padding-top: 11px; }
+td.verdict { width: 92px; text-align: right; padding-right: 0; }
+.check { font-size: 13px; color: var(--text-2); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.check code { font: 12px var(--mono); color: var(--text-2); overflow-wrap: anywhere; }
+.link { background: none; border: 0; padding: 0; color: var(--info); cursor: pointer; font: inherit; font-size: 13px; text-decoration: underline; }
+.note { font-size: 14px; color: var(--text-2); padding: 3px 0 3px 14px; position: relative; }
+.note::before { content: ""; position: absolute; left: 2px; top: 13px; width: 5px; height: 5px; border-radius: 50%; background: var(--warn); }
+.files { font: 12px/1.7 var(--mono); color: var(--text-2); }
+pre { font: 12px/1.55 var(--mono); background: var(--soft); border-radius: 8px; padding: 12px 14px; overflow: auto; max-height: 520px; margin: 8px 0 0; white-space: pre; }
+pre .a { color: var(--ok); } pre .d { color: var(--bad); } pre .h { color: var(--info); }
+.actions { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line); }
+textarea { width: 100%; min-height: 64px; font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--text); resize: vertical; }
+textarea:focus, button:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+button { font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line-strong); background: transparent; color: var(--text); cursor: pointer; }
+button:hover { background: var(--soft); }
+button.primary { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+button.primary:hover { opacity: 0.88; }
+button.quiet { color: var(--text-2); }
+button.small { font-size: 12px; padding: 2px 10px; }
+button:disabled { opacity: 0.45; cursor: default; }
+.err { color: var(--bad); font-size: 13px; min-height: 20px; margin-top: 6px; }
+.empty { padding: 48px 24px; text-align: center; color: var(--text-2); }
+.done { padding: 8px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--text-2); display: flex; gap: 8px; }
+.done .id { font: 12px var(--mono); }
+</style>
+</head>
+<body>
+<header>
+  <h1>검토 대기</h1>
+  <span class="sub" id="sub"></span>
+  <span class="spacer"></span>
+  <button id="accept-selected" disabled>선택한 실행 수용</button>
+  <button id="reload" class="quiet">새로 고침</button>
+</header>
+<main>
+  <div id="side"></div>
+  <div class="card" id="detail"><div class="empty">불러오는 중입니다.</div></div>
+</main>
+<script>
+const base = location.pathname.replace(/\/?$/, '/');
+const state = { data: null, current: null, selected: new Set(), decided: [], drafts: {}, open: {} };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const runs = () => (state.data ? state.data.groups.flatMap((g) => g.runs) : []);
+const find = (id) => runs().find((r) => r.run_id === id);
+
+const PROBLEM = {
+  STALE_SNAPSHOT: '검증한 뒤 작업 트리가 달라졌습니다. 지금 상태로는 수용할 수 없습니다. 다시 검증해 보고서를 재발행하거나, 이후 작업으로 대체됐다면 닫으세요.',
+  STALE_REPORT: '검증 뒤 검토 보고서 파일이 수정됐습니다. 보고서를 다시 발행해야 수용할 수 있습니다.',
+  CONTRACT_MISMATCH: '검증 뒤 실행 계약이 바뀌었습니다. 다시 계획해야 수용할 수 있습니다.',
+  EVIDENCE_LOG_ALTERED: '검사 로그가 검증 때와 다릅니다. 다시 검증해야 수용할 수 있습니다.',
+  MISSING_ARTIFACTS: '증거 파일이 일부 없습니다. 다시 검증해야 수용할 수 있습니다.',
+};
+const VERDICT = { verified: ['검증됨', 'ok'], partly: ['일부 미검증', 'warn'], unverified: ['미검증', 'warn'], failed: ['실패', 'bad'] };
+const CHECK = { PASS: '통과', FAIL: '실패', BLOCKED: '실행 못 함', UNVERIFIED: '사람 확인 필요', SKIPPED_UNIMPACTED: '앞선 통과 유지', NOT_APPLICABLE: '해당 없음' };
+const DECISION = { accept: '수용함', changes: '수정 요청함', close: '닫음' };
+
+async function api(path, body) {
+  const res = await fetch(base + 'api/' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  const json = await res.json().catch(() => ({ ok: false, error: '응답을 읽지 못했습니다.' }));
+  if (!res.ok) throw new Error(json.error || ('요청이 실패했습니다 (' + res.status + ')'));
+  return json;
+}
+
+async function load() {
+  try {
+    state.data = await api('queue');
+  } catch (err) {
+    $('detail').innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
+    return;
+  }
+  const ids = new Set(runs().map((r) => r.run_id));
+  state.selected = new Set([...state.selected].filter((id) => ids.has(id)));
+  if (!ids.has(state.current)) state.current = runs()[0]?.run_id ?? null;
+  render();
+}
+
+function tagsOf(run) {
+  const tags = [];
+  if (!run.acceptable) tags.push('<span class="pill bad">수용 불가</span>');
+  if (run.requirements.some((q) => q.verdict === 'failed')) tags.push('<span class="pill bad">실패한 검사</span>');
+  if (run.requirements.some((q) => q.verdict === 'unverified' || q.verdict === 'partly')) tags.push('<span class="pill warn">미검증 있음</span>');
+  if (run.evidence_strength === 'weak') tags.push('<span class="pill warn">증거 약함</span>');
+  return tags.join('');
+}
+
+function renderSide() {
+  const d = state.data;
+  $('sub').textContent = d.repo_name + ' · ' + d.waiting + '건 대기 · 결정자 ' + d.actor;
+  let html = '';
+  for (const group of d.groups) {
+    const ready = group.runs.filter((r) => r.acceptable).map((r) => r.run_id);
+    html += '<div class="card" style="margin-bottom:14px"><div class="group-head"><b>' + esc(group.key) + '</b><span>' + group.runs.length + '건</span>'
+      + (ready.length > 1 ? '<button class="small quiet" data-group="' + esc(group.key) + '">수용 가능한 실행 모두 선택</button>' : '') + '</div>';
+    for (const run of group.runs) {
+      html += '<div class="run' + (run.run_id === state.current ? ' current' : '') + '" data-run="' + esc(run.run_id) + '">'
+        + '<input type="checkbox" data-check="' + esc(run.run_id) + '"' + (state.selected.has(run.run_id) ? ' checked' : '') + (run.acceptable ? '' : ' disabled') + ' aria-label="' + esc(run.run_id) + ' 선택">'
+        + '<div class="req">' + esc(run.request || '(요청 내용 없음)') + '</div>'
+        + '<span></span><div class="tags"><span class="id">' + esc(run.run_id) + '</span>' + tagsOf(run) + '</div></div>';
+    }
+    html += '</div>';
+  }
+  if (d.groups.length === 0) html += '<div class="card"><div class="empty">결정을 기다리는 실행이 없습니다.</div></div>';
+  if (state.decided.length > 0) {
+    html += '<div class="card"><div class="group-head"><b>이번에 결정한 것</b></div>'
+      + state.decided.map((x) => '<div class="done"><span class="id">' + esc(x.run_id) + '</span><span>' + DECISION[x.action] + '</span></div>').join('') + '</div>';
+  }
+  $('side').innerHTML = html;
+  $('accept-selected').disabled = state.selected.size === 0;
+  $('accept-selected').textContent = state.selected.size > 0 ? '선택한 ' + state.selected.size + '건 수용' : '선택한 실행 수용';
+}
+
+function colorDiff(text) {
+  return text.split('\n').map((line) => {
+    const cls = line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('@@') ? 'h' : line.startsWith('+') ? 'a' : line.startsWith('-') ? 'd' : '';
+    return cls ? '<span class="' + cls + '">' + esc(line) + '</span>' : esc(line);
+  }).join('\n');
+}
+
+function renderDetail() {
+  const run = find(state.current);
+  if (!run) { $('detail').innerHTML = '<div class="empty">' + (state.data.waiting === 0 ? '결정을 기다리는 실행이 없습니다. 터미널에서 Ctrl+C로 이 화면을 끝내세요.' : '왼쪽에서 실행을 고르세요.') + '</div>'; return; }
+  const open = state.open[run.run_id] || {};
+  let html = '<h2>' + esc(run.request || run.run_id) + '</h2><div class="meta"><span style="font-family:var(--mono);font-size:12px">' + esc(run.run_id) + '</span>'
+    + '<span>파일 ' + run.changed_files.length + '개 · <span class="plus">+' + run.added + '</span> <span class="minus">-' + run.removed + '</span></span>'
+    + '<span>자동 검증 ' + esc(run.technical_status || '알 수 없음') + '</span>'
+    + (run.verified_at ? '<span>검증 ' + esc(new Date(run.verified_at).toLocaleString()) + '</span>' : '') + '</div>';
+  for (const p of run.problems) html += '<div class="notice bad">' + esc(PROBLEM[p.code] || p.message) + '</div>';
+
+  html += '<h3>요구와 검사</h3><table>';
+  for (const q of run.requirements) {
+    const [label, cls] = VERDICT[q.verdict];
+    html += '<tr><td class="rid">' + esc(q.id) + '</td><td>' + (q.statement ? esc(q.statement) : '<span style="color:var(--text-3)">(계약에 요구 문구가 없습니다)</span>');
+    if (q.checks.length === 0) html += '<div class="check">이 요구를 확인하는 검사가 없습니다.</div>';
+    for (const c of q.checks) {
+      html += '<div class="check"><span>' + esc(c.id) + ' · ' + esc(CHECK[c.status] || c.status) + '</span>' + (c.command ? '<code>' + esc(c.command) + '</code>' : (c.reason ? '<span>' + esc(c.reason) + '</span>' : ''))
+        + (c.has_log ? '<button class="link" data-log="' + esc(c.id) + '">로그</button>' : '') + '</div>';
+      if (open['log:' + c.id]) html += '<pre>' + esc(open['log:' + c.id]) + '</pre>';
+    }
+    html += '</td><td class="verdict"><span class="pill ' + cls + '">' + label + '</span></td></tr>';
+  }
+  html += '</table>';
+
+  if (run.notes.length > 0) html += '<h3>확인이 필요한 것</h3>' + run.notes.map((n) => '<div class="note">' + esc(n.text) + '</div>').join('');
+
+  html += '<h3>바뀐 파일</h3><div class="files">' + (run.changed_files.map(esc).join('<br>') || '(없음)') + '</div>'
+    + '<div style="margin-top:8px"><button class="link" data-diff="1">' + (open.diff !== undefined ? '변경 내용 접기' : '변경 내용 보기') + '</button></div>';
+  if (open.diff !== undefined) html += '<pre>' + colorDiff(open.diff) + '</pre>';
+
+  html += '<div class="actions"><textarea id="note" placeholder="의견 (수정 요청이면 에이전트에게 그대로 전달됩니다)">' + esc(state.drafts[run.run_id] || '') + '</textarea>'
+    + '<div class="err" id="err"></div><div class="row">'
+    + '<button class="primary" id="do-accept"' + (run.acceptable ? '' : ' disabled') + '>수용</button>'
+    + '<button id="do-changes"' + (run.acceptable ? '' : ' disabled') + '>수정 요청</button><span class="spacer"></span>'
+    + '<button class="quiet" id="do-close">수용 없이 닫기</button></div></div>';
+  $('detail').innerHTML = html;
+  $('note').addEventListener('input', (e) => { state.drafts[run.run_id] = e.target.value; $('err').textContent = ''; });
+}
+
+function render() { renderSide(); renderDetail(); }
+
+async function act(action, body, ids) {
+  const err = $('err');
+  try {
+    await api(action, body);
+    for (const id of ids) { state.decided.unshift({ run_id: id, action }); delete state.drafts[id]; }
+    await load();
+  } catch (e) {
+    if (err) err.textContent = e.message; else alert(e.message);
+    await load();
+    if ($('err')) $('err').textContent = e.message;
+  }
+}
+
+document.addEventListener('click', async (e) => {
+  const t = e.target;
+  if (t.dataset.check !== undefined) { t.checked ? state.selected.add(t.dataset.check) : state.selected.delete(t.dataset.check); renderSide(); return; }
+  if (t.dataset.group !== undefined) {
+    state.data.groups.find((g) => g.key === t.dataset.group).runs.filter((r) => r.acceptable).forEach((r) => state.selected.add(r.run_id));
+    renderSide(); return;
+  }
+  const row = t.closest('.run');
+  if (row) { state.current = row.dataset.run; render(); return; }
+  const run = find(state.current);
+  if (t.id === 'reload') return load();
+  if (t.id === 'accept-selected') {
+    const ids = [...state.selected];
+    if (ids.length === 0) return;
+    if (!confirm(ids.length + '건을 수용합니다.\n\n' + ids.join('\n'))) return;
+    return act('accept', { run_ids: ids, note: '' }, ids);
+  }
+  if (!run) return;
+  const open = state.open[run.run_id] = state.open[run.run_id] || {};
+  const note = () => ($('note') ? $('note').value.trim() : '');
+  if (t.dataset.diff) {
+    if (open.diff !== undefined) delete open.diff;
+    else { const r = await api('run/' + encodeURIComponent(run.run_id) + '/diff'); open.diff = r.text + (r.truncated ? '\n… (뒷부분은 생략됐습니다)' : ''); }
+    return renderDetail();
+  }
+  if (t.dataset.log) {
+    const key = 'log:' + t.dataset.log;
+    if (open[key]) delete open[key];
+    else {
+      const r = await api('run/' + encodeURIComponent(run.run_id) + '/log/' + encodeURIComponent(t.dataset.log));
+      open[key] = ['$ ' + (r.command || ''), '종료 코드 ' + r.exit_code, '', r.stdout.text, r.stderr.text ? '--- stderr ---\n' + r.stderr.text : ''].join('\n').trim() || '(출력 없음)';
+    }
+    return renderDetail();
+  }
+  if (t.id === 'do-accept') return act('accept', { run_ids: [run.run_id], note: note() }, [run.run_id]);
+  if (t.id === 'do-changes') {
+    if (!note()) { $('err').textContent = '무엇을 고칠지 적어 주세요.'; $('note').focus(); return; }
+    return act('changes', { run_id: run.run_id, note: note() }, [run.run_id]);
+  }
+  if (t.id === 'do-close') {
+    if (!confirm(run.run_id + ' 실행을 수용 없이 닫습니다. 되돌릴 수 없습니다.')) return;
+    return act('close', { run_ids: [run.run_id], note: note() }, [run.run_id]);
+  }
+});
+
+load();
+</script>
+</body>
+</html>
