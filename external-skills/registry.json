@@ -4,21 +4,21 @@
     {
       "id": "kouetsu",
       "upstream_url": "https://github.com/prentice7725/kouetsu",
-      "commit_or_release": "1.0.2",
+      "commit_or_release": "1.1.0",
       "license": "MIT",
-      "files_digest": "24959571ab71816c6f904a484697705c0c94f813ec142f5566d9fc7e8f267c79",
-      "references_digest": "e9ad42f666fba112f29e6b6c57a86d99d30972ce946215c8eda43f8638ddc935",
+      "files_digest": "55fdfb46a16d0bedac9aa3686db23f7c21b36da75023dcc3dd3e9f1d252e250a",
+      "references_digest": "0cc176026ee5ebb4c16d95f34b4bfeca911841b01d926a5189943b346a85f0df",
       "host_digests": {
         "claude": {
-          "normalized_skill_digest": "24959571ab71816c6f904a484697705c0c94f813ec142f5566d9fc7e8f267c79",
+          "normalized_skill_digest": "55fdfb46a16d0bedac9aa3686db23f7c21b36da75023dcc3dd3e9f1d252e250a",
           "source_type": "claude_plugin_cache_or_marketplace"
         },
         "codex": {
-          "normalized_skill_digest": "f27081d0c9137317b5303da8aaf3ca17ccc9c2c473a49e2c1709227ac2a824fc",
+          "normalized_skill_digest": "374c1dfa7bf9b67108ee2acd1cb2ca1e76f4e5b36937bb8b0e4d16b48414e3a5",
           "source_type": "repo_host_package"
         },
         "universal": {
-          "normalized_skill_digest": "0e76c3e7381be4a9bd3f42fc728431be920b585b6bb521cd06b095841d34b0a6",
+          "normalized_skill_digest": "fdd868918e2cf3c547ddad1d2def1301ff4585600a1538a170a7e770b77819f4",
           "source_type": "repo_universal_and_agents_package"
         }
       },
@@ -29,14 +29,14 @@
       "permission_scope": ["read_markdown"],
       "conflicts": [],
       "test_report": {
-        "audited_at": "2026-11-19",
+        "audited_at": "2026-11-27",
         "executable_scripts_present": false,
         "network_access": false,
         "cross_provider_calls": false,
-        "notes": "Verified local Claude plugin v1.0.2 (Markdown/JSON only) and packaged MIT-attributed Codex skill rules with identical references_digest."
+        "notes": "Verified local Claude plugin v1.1.0 (Markdown/JSON only) and packaged MIT-attributed Codex skill rules with identical references_digest."
       },
       "status": "approved",
-      "last_reviewed": "2026-11-19"
+      "last_reviewed": "2026-11-27"
     },
     {
       "id": "spec-kit",

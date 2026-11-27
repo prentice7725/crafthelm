@@ -18,6 +18,8 @@ const REFERENCE_FILES = [
 ];
 
 const CLAUDE_SKILL_SUBPATH = 'skills/kouetsu';
+// Used only when the registry has no Kouetsu entry at all.
+export const KOUETSU_FALLBACK_VERSION = '1.1.0';
 
 function hashNormalizedFileSet(baseDir, relPaths) {
   const sorted = [...new Set(relPaths)].sort();
@@ -30,7 +32,8 @@ function hashNormalizedFileSet(baseDir, relPaths) {
 }
 
 /**
- * Locate and verify Kouetsu 1.0.2 assets strictly for the active host (`claude` or `codex`).
+ * Locate and verify the Kouetsu assets for the active host against the version and digests pinned in
+ * `external-skills/registry.json`.
  * Never modifies upstream plugin directories.
  * @param {'claude'|'codex'} host
  * @param {{ kouetsuRoot?: string, homeDir?: string, registryPath?: string }} [options]
@@ -39,6 +42,7 @@ export function verifyKouetsuAsset(host, options = {}) {
   const registryPath = options.registryPath ?? path.join(CRAFTHELM_ROOT, 'external-skills', 'registry.json');
   const registry = fs.existsSync(registryPath) ? JSON.parse(fs.readFileSync(registryPath, 'utf8')) : { entries: [] };
   const kouetsuEntry = (registry.entries ?? []).find((e) => e.id === 'kouetsu');
+  const pinnedVersion = kouetsuEntry?.commit_or_release ?? KOUETSU_FALLBACK_VERSION;
 
   const rawHost = String(host ?? 'generic').trim().toLowerCase();
   const normHost = rawHost === 'agy' ? 'antigravity' : rawHost;
@@ -49,7 +53,8 @@ export function verifyKouetsuAsset(host, options = {}) {
     candidates.push(options.kouetsuRoot);
   } else if (normHost === 'claude') {
     candidates.push(
-      path.join(homeDir, '.claude', 'plugins', 'cache', 'prentice7725', 'kouetsu', '1.0.2'),
+      // Claude Code keeps one cache directory per plugin version; only the pinned one is looked at.
+      path.join(homeDir, '.claude', 'plugins', 'cache', 'prentice7725', 'kouetsu', pinnedVersion),
       path.join(homeDir, '.claude', 'plugins', 'marketplaces', 'prentice7725'),
       path.join(homeDir, '.claude', 'skills', 'kouetsu'),
     );
@@ -119,7 +124,7 @@ export function verifyKouetsuAsset(host, options = {}) {
       host: normHost,
       path: skillBase,
       licensePath,
-      version: kouetsuEntry?.commit_or_release ?? '1.0.2',
+      version: pinnedVersion,
       filesDigest,
       normalizedDigest,
       referencesDigest,
@@ -133,7 +138,7 @@ export function verifyKouetsuAsset(host, options = {}) {
     host: normHost,
     path: null,
     licensePath: null,
-    version: kouetsuEntry?.commit_or_release ?? '1.0.2',
+    version: pinnedVersion,
     filesDigest: null,
     normalizedDigest: null,
     referencesDigest: null,
@@ -160,7 +165,12 @@ const SURFACE_PATTERNS = {
     { name: 'ko_empty_modifiers', regex: /(?:다양한|효과적인|체계적인|혁신적인|핵심적인)/g },
     { name: 'ko_signposting', regex: /(?:에\s+대해\s+살펴보겠습니다|정리하면\s+다음과\s+같습니다|결론적으로)/g },
     { name: 'ko_negative_parallelism', regex: /(?:단순한\s+[^.\n]+가\s+아니라|을\s*넘어\s+[^.\n]+로)/g },
-    { name: 'ko_particle_chains', regex: /[가-힣A-Za-z0-9]+의\s+[가-힣A-Za-z0-9]+의\s+[가-힣A-Za-z0-9]+/g },
+    { name: 'ko_particle_chains', regex: /(?:[가-힣A-Za-z0-9]+의\s+[가-힣A-Za-z0-9]+의\s+[가-힣A-Za-z0-9]+|에로의|으로부터의)/g },
+    // Added with Kouetsu 1.1.0.
+    // The stem fuses with the ending: 불려지다 becomes 불려집니다, 불려진, 불려졌다.
+    { name: 'ko_double_passive', regex: /(?:되어|보여|불려)[지집진질져졌]/g },
+    { name: 'ko_obligation_padding', regex: /(?:할\s+필요가\s+있|하는\s+것이다)/g },
+    { name: 'ko_translated_metaphor', regex: /(?:라는\s+렌즈로|개의\s+축으로|라는\s+토대\s+위에서)/g },
   ],
   en: [
     { name: 'en_nominalization', regex: /\b(?:perform an analysis of|implementation of .+ was carried out)\b/gi },
@@ -171,9 +181,11 @@ const SURFACE_PATTERNS = {
   ],
   ja: [
     { name: 'ja_nominalization', regex: /(?:の実施を行いました|における[^。\n]+の[^。\n]+)/g },
-    { name: 'ja_hedged_ending', regex: /(?:と言えるでしょう|と考えられます|かもしれません)/g },
-    { name: 'ja_empty_modifiers', regex: /(?:さまざまな|多岐にわたる|効果的な|重要な役割を果たす)/g },
-    { name: 'ja_signposting', regex: /(?:について見ていきましょう|まとめると|結論として|いかがでしたか)/g },
+    { name: 'ja_hedged_ending', regex: /(?:と言えるでしょう|といえます|と考えられます|かもしれません|高い水準で実現されている)/g },
+    { name: 'ja_empty_modifiers', regex: /(?:さまざまな|多岐にわたる|効果的な|重要な役割を果たす|強固な土台)/g },
+    { name: 'ja_signposting', regex: /(?:について見ていきましょう|まとめると|結論として|いかがでしたか|整理すると|ここで確認しておきたい|補足しておきます)/g },
+    // Added with Kouetsu 1.1.0.
+    { name: 'ja_metaphor_verbs', regex: /(?:静かに壊れる|時間を溶かす|地味に効く|解像度が上がる|黙ってスキップする)/g },
     { name: 'ja_negative_parallelism', regex: /(?:単なる[^。\n]+ではなく|だけでなく[^。\n]+も)/g },
   ],
 };

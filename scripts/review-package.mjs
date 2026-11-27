@@ -4,7 +4,7 @@ import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256File } from './lib/crypto.mjs';
 import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest } from './lib/git.mjs';
-import { runEditorialCheck, verifyKouetsuAsset } from './lib/kouetsu-check.mjs';
+import { KOUETSU_FALLBACK_VERSION, runEditorialCheck, verifyKouetsuAsset } from './lib/kouetsu-check.mjs';
 import {
   getCheckpointPath,
   getContractPath,
@@ -424,7 +424,7 @@ export function publishReviewPackage(options) {
       run_id: runId,
       host: contract.host,
       kouetsu_skill_id: 'kouetsu',
-      kouetsu_version: '1.0.2',
+      kouetsu_version: KOUETSU_FALLBACK_VERSION,
       kouetsu_digest: null,
       executed: false,
       status: 'MISSING',
