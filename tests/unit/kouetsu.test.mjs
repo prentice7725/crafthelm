@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { runEditorialCheck, verifyKouetsuAsset } from '../../scripts/lib/kouetsu-check.mjs';
+import { CRAFTHELM_ROOT } from '../../scripts/lib/paths.mjs';
 
 function makeValidEightSectionReport(extraBody = '') {
   return [
@@ -56,7 +57,7 @@ describe('Kouetsu Editorial Gate & Cross-Host Parity (H06 / H07 / E13)', () => {
     assert.equal(genericAsset.referencesDigest, codexAsset.referencesDigest);
 
     const claudePluginExists = fs.existsSync(
-      path.join(os.homedir(), '.claude', 'plugins', 'cache', 'prentice7725', 'kouetsu', '1.0.2', 'skills', 'kouetsu', 'SKILL.md'),
+      path.join(os.homedir(), '.claude', 'plugins', 'cache', 'prentice7725', 'kouetsu', '1.1.0', 'skills', 'kouetsu', 'SKILL.md'),
     );
     if (claudePluginExists) {
       const claudeAsset = verifyKouetsuAsset('claude');
@@ -120,5 +121,47 @@ describe('Kouetsu Editorial Gate & Cross-Host Parity (H06 / H07 / E13)', () => {
     });
     assert.equal(res2.status, 'BLOCKED');
     assert.equal(res2.critical_confirmations.length, 1);
+  });
+
+  it('takes the pinned version from the registry and rejects a package that is not that version', () => {
+    const registry = JSON.parse(fs.readFileSync(path.join(CRAFTHELM_ROOT, 'external-skills', 'registry.json'), 'utf8'));
+    const pinned = registry.entries.find((e) => e.id === 'kouetsu').commit_or_release;
+    assert.equal(pinned, '1.1.0');
+    for (const host of ['codex', 'generic', 'antigravity']) {
+      const asset = verifyKouetsuAsset(host);
+      assert.deepEqual([asset.status, asset.version], ['VERIFIED', pinned], host);
+    }
+    // Each bundled package names the version it was derived from.
+    for (const dir of ['hosts/universal/skills/kouetsu', 'hosts/codex/skills/kouetsu', '.agents/skills/kouetsu']) {
+      assert.match(fs.readFileSync(path.join(CRAFTHELM_ROOT, dir, 'SKILL.md'), 'utf8'), new RegExp(`derived from \`prentice7725/kouetsu\` v${pinned.replaceAll('.', '\\.')} `), dir);
+      assert.match(fs.readFileSync(path.join(CRAFTHELM_ROOT, dir, 'NOTICE.md'), 'utf8'), new RegExp(`Upstream Version: ${pinned.replaceAll('.', '\\.')}`), dir);
+    }
+
+    // A copy with one rule line changed, such as a package left over from another version, is not accepted.
+    const stale = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-kouetsu-stale-'));
+    try {
+      fs.cpSync(path.join(CRAFTHELM_ROOT, 'hosts', 'universal', 'skills', 'kouetsu'), stale, { recursive: true });
+      assert.equal(verifyKouetsuAsset('generic', { kouetsuRoot: stale }).status, 'VERIFIED');
+      fs.appendFileSync(path.join(stale, 'references', 'ko.md'), '- **Extra rule**: not in the pinned release.\n', 'utf8');
+      assert.equal(verifyKouetsuAsset('generic', { kouetsuRoot: stale }).status, 'TAMPERED');
+    } finally {
+      fs.rmSync(stale, { recursive: true, force: true });
+    }
+  });
+
+  it('counts the literal patterns Kouetsu 1.1.0 added, in Korean and Japanese', () => {
+    const check = (body, language) => runEditorialCheck(makeValidEightSectionReport(body), {
+      runId: 'RUN-K4', host: 'codex', language, kouetsuAsset: verifyKouetsuAsset('codex'), manifest: { technical_status: 'VERIFIED' },
+    });
+    const tags = (report) => report.findings.filter((f) => f.layer === 'surface').map((f) => [f.pattern, f.count]);
+
+    assert.deepEqual(tags(check('값이 되어지고, 그렇게 보여지며, 그렇게 불려집니다.', 'ko')), [['ko_double_passive', 3]]);
+    assert.deepEqual(tags(check('검토할 필요가 있습니다. 확인할 필요가 있습니다. 수정할 필요가 있습니다.', 'ko')), [['ko_obligation_padding', 3]]);
+    assert.deepEqual(tags(check('보안이라는 렌즈로 보면 세 개의 축으로 정리되고 신뢰라는 토대 위에서 움직입니다.', 'ko')), [['ko_translated_metaphor', 3]]);
+    // Twice is still within the threshold.
+    assert.deepEqual(tags(check('검토할 필요가 있습니다. 확인할 필요가 있습니다.', 'ko')), []);
+
+    assert.deepEqual(tags(check('設定が静かに壊れる。作業が時間を溶かす。この修正は地味に効く。', 'ja')), [['ja_metaphor_verbs', 3]]);
+    assert.deepEqual(tags(check('整理すると次のとおりです。ここで確認しておきたい点があります。補足しておきます。', 'ja')), [['ja_signposting', 3]]);
   });
 });

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { collectRelativeFiles, sha256File } from './lib/crypto.mjs';
-import { verifyKouetsuAsset } from './lib/kouetsu-check.mjs';
+import { KOUETSU_FALLBACK_VERSION, verifyKouetsuAsset } from './lib/kouetsu-check.mjs';
 import { CRAFTHELM_ROOT, getSkillLockPath } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 
@@ -150,7 +150,7 @@ export function auditSkillDirectory(skillPath, options = {}) {
 }
 
 /**
- * Pin approved external skills (starting with Kouetsu 1.0.2) into `.crafthelm/skills.lock.json`.
+ * Pin approved external skills (starting with Kouetsu) into `.crafthelm/skills.lock.json`.
  */
 export function lockApprovedSkills(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
@@ -180,7 +180,7 @@ export function lockApprovedSkills(options) {
     skills: [
       {
         id: 'kouetsu',
-        version: kouetsuEntry?.commit_or_release ?? '1.0.2',
+        version: kouetsuEntry?.commit_or_release ?? KOUETSU_FALLBACK_VERSION,
         license: kouetsuEntry?.license ?? 'MIT',
         upstream_url: kouetsuEntry?.upstream_url ?? 'https://github.com/prentice7725/kouetsu',
         source_path: asset.path,

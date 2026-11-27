@@ -42,7 +42,7 @@ function createTempRepo(files) {
 describe('CraftHelm M0 Vertical Slice E2E Tests (Flows A-N)', () => {
   it('Flow A: Claude-only TDD feature -> RED -> GREEN -> E2E -> Kouetsu -> READY_FOR_HUMAN_REVIEW -> ACCEPT (E01/E02/H06)', () => {
     const claudeKouetsuExists = fs.existsSync(
-      path.join(os.homedir(), '.claude', 'plugins', 'cache', 'prentice7725', 'kouetsu', '1.0.2', 'skills', 'kouetsu', 'SKILL.md'),
+      path.join(os.homedir(), '.claude', 'plugins', 'cache', 'prentice7725', 'kouetsu', '1.1.0', 'skills', 'kouetsu', 'SKILL.md'),
     );
     const repo = createTempRepo({
       'README.md': '# Auth Demo\n',

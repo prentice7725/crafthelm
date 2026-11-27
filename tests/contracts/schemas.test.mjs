@@ -108,7 +108,7 @@ describe('CraftHelm JSON Schemas', () => {
       run_id: 'RUN-1',
       host: 'codex',
       kouetsu_skill_id: 'kouetsu',
-      kouetsu_version: '1.0.2',
+      kouetsu_version: '1.1.0',
       kouetsu_digest: SHA_A,
       executed: true,
       status: 'PASS',
@@ -184,7 +184,7 @@ describe('CraftHelm JSON Schemas', () => {
       skills: [
         {
           id: 'kouetsu',
-          version: '1.0.2',
+          version: '1.1.0',
           license: 'MIT',
           upstream_url: 'https://github.com/prentice7725/kouetsu',
           source_path: '/tmp/kouetsu',

@@ -2,7 +2,7 @@
 
 ## 역할과 한계
 
-- CraftHelm은 `prentice7725/kouetsu` v1.0.2 (MIT)의 내용(Content), 명확성(Clarity), 표면(Surface) 3계층 교열 규칙을 검토 보고서(`review-package.md`)에 적용한다.
+- CraftHelm은 `prentice7725/kouetsu` v1.1.0 (MIT)의 내용(Content), 명확성(Clarity), 표면(Surface) 3계층 교열 규칙을 검토 보고서(`review-package.md`)에 적용한다.
 - Kouetsu는 글꼴·여백·PDF 레이아웃 도구가 아니며, 코드 결함 부재나 사실 진위를 증명하지 않는다.
 - 문서 교열 결과는 `reports/editorial-report.json`에 분리 기록하며, 교열을 실행하지 않았을 때는 `executed: false, status: "MISSING"`으로 기록한다.
 
