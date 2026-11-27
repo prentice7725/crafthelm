@@ -1,3 +1,4 @@
+import { findCraftHelmRepo } from './lib/scope-guard.mjs';
 import { BUILTIN_CLI_HOSTS, getHostAdapter, normalizeHostId } from '../hosts/registry.mjs';
 import { getSkillsInstallStatus } from './install-skills.mjs';
 import { inspectClaudeScopeHook, inspectClaudeStatusHook } from './lib/claude-hooks.mjs';
@@ -175,7 +176,9 @@ if (isMainModule(import.meta.url)) {
     inSession: Boolean(args['in-session']),
     singleModel: Boolean(args['single-model']),
     requireKouetsu: Boolean(args['require-kouetsu']),
-    repo: args.repo,
+    // Run inside a repository CraftHelm has set up, the project checks apply to it without --repo:
+    // a setup older than the hooks is otherwise never reported.
+    repo: typeof args.repo === 'string' ? args.repo : (findCraftHelmRepo(process.cwd()) ?? undefined),
   });
 
   if (args.json) {

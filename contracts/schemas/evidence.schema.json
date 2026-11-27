@@ -46,6 +46,8 @@
           "reason": { "type": "string" },
           "selection_reason": { "type": "string" },
           "duration_ms": { "type": "integer", "minimum": 0 },
+          "timeout_ms": { "type": "integer", "minimum": 1 },
+          "timed_out": { "type": "boolean" },
           "started_at": { "type": "string", "minLength": 1 },
           "stdout_file": { "type": "string" },
           "stderr_file": { "type": "string" },

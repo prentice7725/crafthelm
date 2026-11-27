@@ -65,7 +65,7 @@ function resolveTaskDocsDir(repoRoot, docsDir, taskId) {
   return toPosixPath(docsDir ?? 'docs');
 }
 
-function computeBaselineCraftHelmFiles(repoRoot, docsDir = 'docs', taskId = null) {
+function computeBaselineCraftHelmFiles(repoRoot, docsDir = 'docs', taskId = null, fileHashes = null) {
   const effectiveDocsDir = resolveTaskDocsDir(repoRoot, docsDir, taskId);
   const candidates = [
     ...INTERVIEW_DOCS.map(name => `${effectiveDocsDir}/${name}`),
@@ -94,18 +94,18 @@ function computeBaselineCraftHelmFiles(repoRoot, docsDir = 'docs', taskId = null
   for (const rel of candidates) {
     const abs = path.join(repoRoot, rel);
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
-      hashes[rel] = sha256File(abs);
+      hashes[rel] = fileHashes?.get(rel) ?? sha256File(abs);
     }
   }
   return hashes;
 }
 
-function computeSotHashes(repoRoot, sourceRefs = []) {
+function computeSotHashes(repoRoot, sourceRefs = [], fileHashes = null) {
   const hashes = {};
   for (const ref of sourceRefs) {
     const abs = path.join(repoRoot, ref);
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
-      hashes[toPosixPath(ref)] = sha256File(abs);
+      hashes[toPosixPath(ref)] = fileHashes?.get(toPosixPath(ref)) ?? sha256File(abs);
     }
   }
   return hashes;
@@ -213,8 +213,8 @@ function initializeCheckpoint(options) {
     target_snapshot_digest: snapshotDigest,
     skill_lock_sha256: skillLockSha,
     protected_file_hashes: computeFileMapHashes(repoRoot, protectedPatterns, fileHashes),
-    baseline_crafthelm_files: computeBaselineCraftHelmFiles(repoRoot, options.docsDir ?? 'docs', contract.task_id),
-    sot_hashes: computeSotHashes(repoRoot, contract.source_policy?.source_refs),
+    baseline_crafthelm_files: computeBaselineCraftHelmFiles(repoRoot, options.docsDir ?? 'docs', contract.task_id, fileHashes),
+    sot_hashes: computeSotHashes(repoRoot, contract.source_policy?.source_refs, fileHashes),
     repair_rounds: {},
     stage_history: [
       {
@@ -695,16 +695,19 @@ export function replanRun(options) {
     recorded_at: new Date().toISOString(),
   };
 
-  const replanLogPath = path.join(getRunDir(repoRoot, runId), 'approvals', 'replan-history.jsonl');
-  fs.mkdirSync(path.dirname(replanLogPath), { recursive: true });
-  fs.appendFileSync(replanLogPath, `${JSON.stringify(historyEntry)}\n`, 'utf8');
+  // Hashing the tree is the slow part and can be interrupted, so it comes before anything is
+  // written. Each file is read once: the snapshot's hashes serve the source and baseline maps.
+  const fileHashes = new Map();
+  const snapshotDigest = computeSnapshotDigest(repoRoot, { fileHashes });
+  const sotHashes = computeSotHashes(repoRoot, contract.source_policy?.source_refs, fileHashes);
+  const baselineFiles = computeBaselineCraftHelmFiles(repoRoot, options.docsDir ?? 'docs', checkpoint.task_id, fileHashes);
 
   checkpoint.replan_history = checkpoint.replan_history ?? [];
   checkpoint.replan_history.push(historyEntry);
   checkpoint.contract_sha256 = contractSha256;
-  checkpoint.sot_hashes = computeSotHashes(repoRoot, contract.source_policy?.source_refs);
-  checkpoint.baseline_crafthelm_files = computeBaselineCraftHelmFiles(repoRoot, options.docsDir ?? 'docs', checkpoint.task_id);
-  checkpoint.target_snapshot_digest = computeSnapshotDigest(repoRoot);
+  checkpoint.sot_hashes = sotHashes;
+  checkpoint.baseline_crafthelm_files = baselineFiles;
+  checkpoint.target_snapshot_digest = snapshotDigest;
   for (const s of invalidatedStages) {
     checkpoint.stage_history.push({
       stage: s,
@@ -716,7 +719,13 @@ export function replanRun(options) {
   checkpoint.state = STATES.READY;
   checkpoint.current_stage = 'tasks';
   delete checkpoint.blocked_reason;
+  // The checkpoint is the record the next step reads, so it is written first (atomically); the
+  // append-only log follows. Stopped in between, the log lacks one line but no step sees a re-plan
+  // that the checkpoint does not know about.
   saveCheckpoint(repoRoot, runId, checkpoint);
+  const replanLogPath = path.join(getRunDir(repoRoot, runId), 'approvals', 'replan-history.jsonl');
+  fs.mkdirSync(path.dirname(replanLogPath), { recursive: true });
+  fs.appendFileSync(replanLogPath, `${JSON.stringify(historyEntry)}\n`, 'utf8');
 
   return { ok: true, state: checkpoint.state, contract_sha256: contractSha256, invalidated_stages: invalidatedStages };
 }

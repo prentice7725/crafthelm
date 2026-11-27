@@ -128,30 +128,44 @@ export function runCommand(cmd, args = [], options = {}) {
   };
 }
 
+// The exit code `timeout(1)` uses; 127 would read as "command not found".
+export const TIMEOUT_EXIT_CODE = 124;
+
 /**
  * Run a shell command string (used for contract acceptance commands).
  * @param {string} commandString
  * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, timeoutMs?: number }} [options]
- * @returns {{ exitCode: number, stdout: string, stderr: string, durationMs: number, error?: string }}
+ * @returns {{ exitCode: number, stdout: string, stderr: string, durationMs: number, timedOut: boolean, timeoutMs: number, error?: string }}
+ *   A command stopped at its time limit comes back with `timedOut` and exit code 124.
  */
 export function runShellCommand(commandString, options = {}) {
   const started = Date.now();
+  const timeoutMs = options.timeoutMs ?? 120_000;
   const res = spawnSync(commandString, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     shell: true,
-    timeout: options.timeoutMs ?? 120_000,
+    timeout: timeoutMs,
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: 20 * 1024 * 1024,
   });
   const durationMs = Math.max(0, Date.now() - started);
-  const exitCode = typeof res.status === 'number' ? res.status : (res.error ? 127 : 1);
+  const timedOut = res.error?.code === 'ETIMEDOUT';
+  const exitCode = timedOut ? TIMEOUT_EXIT_CODE : (typeof res.status === 'number' ? res.status : (res.error ? 127 : 1));
+  // spawnSync reports a timeout or a failed spawn in `error` and leaves stderr an empty string,
+  // so the reason is appended: a stored log must say why the command produced no result.
+  const note = timedOut
+    ? `[crafthelm] Stopped after ${timeoutMs} ms: the command did not finish within its time limit.`
+    : (res.error ? `[crafthelm] ${res.error.message}` : '');
+  const stderr = res.stderr ?? '';
   return {
     exitCode,
     stdout: res.stdout ?? '',
-    stderr: res.stderr ?? (res.error ? res.error.message : ''),
+    stderr: note ? `${stderr}${stderr && !stderr.endsWith('\n') ? '\n' : ''}${note}\n` : stderr,
     durationMs,
+    timedOut,
+    timeoutMs,
     error: res.error ? res.error.message : undefined,
   };
 }
