@@ -59,6 +59,13 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
 
   // One table cell: no line breaks, and a pipe would start a new cell.
   const cell = (text) => String(text).replace(/\s*\r?\n\s*/g, ' ').replaceAll('|', '&#124;');
+  // A tooling baseline moved forward mid-run takes those files out of the scope check; the reviewer sees it.
+  const rebaselines = checkpoint.rebaseline_history ?? [];
+  const rebaselineRows = rebaselines.length === 0 ? [] : [
+    `| 도구 파일 기준 갱신 | 사람이 실행한 \`checkpoint rebaseline\` ${rebaselines.length}회. 아래 파일은 범위 검사에서 빠졌습니다. ${rebaselines
+      .map((h) => `${h.recorded_at}: ${cell(h.reason)} (${h.changed_files.map((f) => `\`${f.path}\``).join(', ')})`)
+      .join('<br>')} |`,
+  ];
   const statements = new Map((contract.requirements ?? []).map((r) => [r.id, r.statement]));
   const expected = (reqId) => (statements.has(reqId) ? `\`${reqId}\` ${cell(statements.get(reqId))}` : reqId);
   const uncovered = requirementsWithoutAcceptance(contract);
@@ -186,6 +193,7 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     `| 작업 | \`${contract.task_id}\` — ${contract.title ?? contract.request} |`,
     `| 이번 승인 대상 | ${contract.scope.allow.join(', ')} (${manifest.scope.changed_files.length}개 파일 변경) |`,
     `| 실행 계약 승인 | \`${contract.approval?.contract_approved_by ?? 'unknown'}\` — 승인 경로: \`${contract.approval?.contract_approved_via ?? 'unknown'}\` (\`agent_session\`이면 AI 세션 안에서 실행된 승인) |`,
+    ...rebaselineRows,
     `| 승인하면 달라지는 것 | ${cell(contract.request)}${uncovered.length > 0 ? ` (이 중 ${uncovered.map((r) => `\`${r.id}\``).join(', ')}은 수용 기준이 없어 검증되지 않았습니다)` : ''} |`,
     `| 자동 검증 상태 | **${manifest.technical_status}** — 근거: \`../evidence-manifest.json\` |`,
     `| 검증 수준 | **${manifest.verification_level}** — \`none/partial/verified\`는 수행된 기술 검사의 범위만 의미 |`,
