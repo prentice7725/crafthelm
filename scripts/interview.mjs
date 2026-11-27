@@ -100,6 +100,44 @@ export function discoverProjectSot(repoRoot) {
 }
 
 /**
+ * Requirements as given in the interview input, checked and completed. An item needs `id` and
+ * `statement`; anything else has a default. A misspelt field (`text` for `statement`) used to reach
+ * requirements.md as the word "undefined" and leave the contract without the requirement.
+ * @param {unknown} raw
+ * @param {{ source: string, approvedBy: string }} defaults
+ * @returns {Array<{ id: string, statement: string, source: string, status: string, assumption: string, approved_by: string }>|null} null when none were given
+ */
+export function normalizeRequirements(raw, defaults) {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) throw new Error('INTERVIEW_INPUT_INVALID: "requirements" must be an array of { "id": "REQ-01", "statement": "..." }.');
+  if (raw.length === 0) return null;
+  const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+  const seen = new Set();
+  return raw.map((item, index) => {
+    const where = `requirements[${index}]`;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`INTERVIEW_INPUT_INVALID: ${where} must be an object like { "id": "REQ-01", "statement": "..." }.`);
+    }
+    const missing = ['id', 'statement'].filter((field) => !text(item[field]));
+    if (missing.length > 0) {
+      throw new Error(`INTERVIEW_INPUT_INVALID: ${where} needs a non-empty ${missing.map((f) => `"${f}"`).join(' and ')} (it has: ${Object.keys(item).join(', ') || 'nothing'}). Expected { "id": "REQ-01", "statement": "what must be true" }; "source", "status", "assumption" and "approved_by" are optional.`);
+    }
+    const id = text(item.id);
+    if (seen.has(id)) throw new Error(`INTERVIEW_INPUT_INVALID: ${where} repeats the id "${id}".`);
+    seen.add(id);
+    return {
+      id,
+      // One table row and one line of the contract: line breaks and cell separators are folded.
+      statement: text(item.statement).replace(/\s*\r?\n\s*/g, ' '),
+      source: text(item.source) ?? defaults.source,
+      status: text(item.status) ?? 'approved',
+      assumption: text(item.assumption) ?? 'none',
+      approved_by: text(item.approved_by) ?? defaults.approvedBy,
+    };
+  });
+}
+
+/**
  * Run Source-First interview intake, classify uncertainties, and emit docs + contract.
  * Returns status `INTERVIEW_REQUIRED` without guessing whenever any `BLOCKER` remains unresolved.
  * @param {object} options
@@ -108,6 +146,12 @@ export function runInterview(options = {}) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const sot = discoverProjectSot(repoRoot);
   const input = options.inputData ?? (options.inputPath ? JSON.parse(fs.readFileSync(options.inputPath, 'utf8')) : {});
+
+  // Checked before anything is written or asked: a malformed input is the caller's to fix.
+  const givenRequirements = normalizeRequirements(input.requirements, {
+    source: input.source ?? 'user_interview',
+    approvedBy: input.approved_by ?? 'pending_contract_approval',
+  });
 
   let repoConfig = null;
   const repoConfigPath = path.join(repoRoot, '.crafthelm', 'config.json');
@@ -254,9 +298,8 @@ export function runInterview(options = {}) {
           : []),
       ];
 
-  const requirements = Array.isArray(input.requirements) && input.requirements.length > 0
-    ? input.requirements
-    : [
+  const requirements = givenRequirements
+    ?? [
         {
           id: 'REQ-01',
           statement: requestText,
@@ -272,6 +315,8 @@ export function runInterview(options = {}) {
     task_id: taskId,
     title: input.title ?? requestText.slice(0, 80),
     request: requestText,
+    // What is being approved, in the approved document itself and under its hash.
+    requirements: requirements.map((r) => ({ id: r.id, statement: r.statement })),
     project_root: '.',
     host,
     ...(hostConfig ? { host_config: hostConfig } : {}),
@@ -332,7 +377,7 @@ export function runInterview(options = {}) {
     '',
     '| ID | Statement | Source | Status | Assumption | Approved By |',
     '|---|---|---|---|---|---|',
-    ...requirements.map((r) => `| ${r.id} | ${r.statement} | ${r.source} | ${r.status} | ${r.assumption ?? 'none'} | ${r.approved_by} |`),
+    ...requirements.map((r) => `| ${[r.id, r.statement, r.source, r.status, r.assumption, r.approved_by].map((cell) => String(cell).replaceAll('|', '\\|')).join(' | ')} |`),
     '',
   ].join('\n');
 
@@ -473,7 +518,9 @@ if (isMainModule(import.meta.url)) {
     process.exit(0);
   }
   const args = parseArgs(argv);
-  const res = runInterview({
+  let res;
+  try {
+    res = runInterview({
     repo: args.repo ?? '.',
     taskId: args['task-id'],
     request: args.request ?? args._[0],
@@ -489,7 +536,12 @@ if (isMainModule(import.meta.url)) {
     approveContract: Boolean(args['approve-contract']),
     approvalChannel: args['approve-contract'] ? classifyApprovalChannel() : undefined,
     actor: args.actor,
-  });
+    });
+  } catch (err) {
+    // A bad input file is reported as one line, not as a stack trace.
+    process.stderr.write(`${err.message}\n`);
+    process.exit(1);
+  }
   for (const w of res.warnings ?? []) {
     process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
   }

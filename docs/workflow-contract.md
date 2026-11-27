@@ -22,3 +22,9 @@
 - `checkpoint replan`은 트리 해시 계산을 모두 끝낸 뒤에 기록한다. 체크포인트를 먼저 원자적으로 쓰고 `approvals/replan-history.jsonl`에 한 줄을 덧붙인다. 계산 도중 중단되면 두 파일 모두 바뀌지 않는다. 스냅샷을 계산하며 읽은 파일 해시를 SOT 해시와 기준 파일 해시에 다시 쓰므로 큰 파일도 한 번만 읽는다.
 - 이미 승인된 계약을 같은 승인자가 같은 경로로 다시 승인하면 아무것도 쓰지 않고 `already_approved: true`를 돌려준다. 승인 시각을 고쳐 쓰면 계약 해시가 바뀌어, 열려 있는 실행이 `CONTRACT_HASH_MISMATCH`로 재계획을 요구하게 되기 때문이다.
 - 이미 있는 작업 ID로 `interview`를 다시 실행하면 `TASK_EXISTS`로 끝나고 계약은 그대로다. 바뀐 요청을 반영하려면 `--overwrite`로 다시 만들거나 `contract add-e2e`·`add-test`로 고친 뒤 승인한다.
+
+## 인터뷰 입력의 요구사항 형식
+
+- `--input` 파일의 `requirements`는 `{ "id": "REQ-01", "statement": "..." }` 객체의 배열이다. `id`와 `statement`가 필수이고 `source`, `status`, `assumption`, `approved_by`는 생략하면 기본값이 들어간다.
+- 필수 필드가 없거나 다른 이름(`text` 등)으로 쓴 항목은 `INTERVIEW_INPUT_INVALID`로 거부하고 종료 코드 1로 끝난다. 아무 파일도 쓰지 않는다. 예전에는 `requirements.md`에 `undefined`가 찍힌 채 종료 코드 0으로 끝났다.
+- 요구사항 문구는 계약의 `requirements`에도 들어간다. 사람이 승인하는 문서와 그 해시에 "무엇을 하는가"가 포함되게 하려는 것이다. 이 필드가 없는 기존 계약은 그대로 유효하다.

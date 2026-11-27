@@ -6,7 +6,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { acquireWriterLock, initCheckpoint, replanRun } from '../../scripts/checkpoint.mjs';
 import { addE2eCriterion, approveContractFile } from '../../scripts/contract.mjs';
-import { runInterview } from '../../scripts/interview.mjs';
+import { normalizeRequirements, runInterview } from '../../scripts/interview.mjs';
 import { sha256File } from '../../scripts/lib/crypto.mjs';
 import { TIMEOUT_EXIT_CODE, runShellCommand } from '../../scripts/lib/exec.mjs';
 import { runGit } from '../../scripts/lib/git.mjs';
@@ -226,6 +226,50 @@ describe('Session status: short on every turn, and consistent', () => {
       const res = spawnSync(process.execPath, [path.join(CRAFTHELM_ROOT, 'scripts', 'doctor.mjs'), '--host', 'claude', '--json'], { cwd: path.join(repo, '.crafthelm'), encoding: 'utf8', windowsHide: true });
       const codes = JSON.parse(res.stdout).warnings.map((w) => w.code);
       assert.ok(codes.includes('CLAUDE_SCOPE_HOOK_MISSING') && codes.includes('CLAUDE_STATUS_HOOK_MISSING'), codes.join(', '));
+    } finally {
+      remove(repo);
+    }
+  });
+});
+
+describe('Interview input: a requirement that cannot be read is refused, not printed as "undefined"', () => {
+  it('rejects an item without id or statement, fills the optional fields, and puts the wording in the contract', () => {
+    const defaults = { source: 'user_interview', approvedBy: 'pending_contract_approval' };
+    assert.throws(() => normalizeRequirements([{ id: 'REQ-01', text: 'Convert tables' }], defaults),
+      /INTERVIEW_INPUT_INVALID: requirements\[0\] needs a non-empty "statement" \(it has: id, text\)\. Expected \{ "id": "REQ-01", "statement": "what must be true" \}/);
+    assert.throws(() => normalizeRequirements(['Convert tables'], defaults), /requirements\[0\] must be an object/);
+    assert.throws(() => normalizeRequirements({ id: 'REQ-01' }, defaults), /"requirements" must be an array/);
+    assert.throws(() => normalizeRequirements([{ id: 'A', statement: 'x' }, { id: 'A', statement: 'y' }], defaults), /requirements\[1\] repeats the id "A"/);
+    assert.equal(normalizeRequirements(undefined, defaults), null);
+    assert.deepEqual(normalizeRequirements([{ id: 'REQ-01', statement: 'Convert\n  tables' }], defaults), [
+      { id: 'REQ-01', statement: 'Convert tables', source: 'user_interview', status: 'approved', assumption: 'none', approved_by: 'pending_contract_approval' },
+    ]);
+
+    const repo = makeRepo();
+    try {
+      const base = { request: 'Convert tables', acceptance: [{ id: 'AC-01', requirement: 'REQ-01', kind: 'test', command: 'node --version', expected_exit_code: 0 }] };
+      const inputPath = path.join(repo, 'input.json');
+      fs.writeFileSync(inputPath, JSON.stringify({ ...base, requirements: [{ id: 'REQ-01', text: 'Convert tables' }] }), 'utf8');
+      const cli = spawnSync(process.execPath, [path.join(CRAFTHELM_ROOT, 'scripts', 'interview.mjs'), '--repo', repo, '--task-id', 'REQS', '--input', inputPath], { encoding: 'utf8', windowsHide: true });
+      assert.equal(cli.status, 1);
+      assert.match(cli.stderr, /^INTERVIEW_INPUT_INVALID: requirements\[0\] needs a non-empty "statement"/);
+      assert.doesNotMatch(cli.stderr, /\n\s+at /);
+      assert.equal(fs.existsSync(path.join(repo, '.crafthelm', 'contracts', 'REQS.json')), false);
+
+      const res = runInterview({ repo, taskId: 'REQS', inputData: { ...base, requirements: [{ id: 'REQ-01', statement: 'Tables keep their | separators' }, { id: 'REQ-02', statement: 'Figures keep captions', source: 'spec.md' }] } });
+      assert.equal(res.ok, true);
+      assert.deepEqual(readJson(path.join(repo, '.crafthelm', 'contracts', 'REQS.json')).requirements, [
+        { id: 'REQ-01', statement: 'Tables keep their | separators' },
+        { id: 'REQ-02', statement: 'Figures keep captions' },
+      ]);
+      const doc = fs.readFileSync(path.join(repo, 'docs', 'tasks', 'REQS', 'requirements.md'), 'utf8');
+      assert.doesNotMatch(doc, /undefined/);
+      assert.match(doc, /\| REQ-01 \| Tables keep their \\\| separators \| user_interview \| approved \| none \| pending_contract_approval \|/);
+      assert.match(doc, /\| REQ-02 \| Figures keep captions \| spec\.md \| approved \| none \| pending_contract_approval \|/);
+
+      // With no requirements given, the request itself is the one requirement, in the contract too.
+      const plain = runInterview({ repo, taskId: 'PLAINREQ', inputData: base });
+      assert.deepEqual(readJson(plain.contract_path).requirements, [{ id: 'REQ-01', statement: 'Convert tables' }]);
     } finally {
       remove(repo);
     }
