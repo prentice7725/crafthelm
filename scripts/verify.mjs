@@ -18,6 +18,7 @@ import {
   getGitTreeHash,
   isGitRepo,
   readFileAtRef,
+  runGit,
 } from './lib/git.mjs';
 import {
   getCheckpointPath,
@@ -37,6 +38,9 @@ import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-o
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
 import { listActiveScopes } from './lib/scope-guard.mjs';
+import { isOnlyClaudeGuardAddition } from './lib/claude-hooks.mjs';
+import { readClaudeSettings } from './lib/claude-permissions.mjs';
+import { isToolingBaselineFile } from './checkpoint.mjs';
 import { extractCommandTargets } from './lib/test-runners.mjs';
 import { appendVerifyRound, formatVerifyHistoryText, readVerifyHistory, summarizeVerifyHistory } from './lib/verify-history.mjs';
 import { assertNoForeignWriterLock } from './lib/writer-lock.mjs';
@@ -297,6 +301,28 @@ function decideSelectiveExecution(ac, impact, contract, selectiveMode) {
   };
 }
 
+const CLAUDE_SETTINGS = '.claude/settings.json';
+
+/**
+ * Whether the project's Claude settings differ from the run's baseline only by CraftHelm guards that
+ * a reinstall added. The baseline content is read from git at the baseline commit and must hash to
+ * what the checkpoint froze; a baseline that was never committed, or was moved by `rebaseline`,
+ * cannot be compared and is not exempted.
+ */
+function claudeSettingsOnlyGainedGuards(repoRoot, checkpoint) {
+  const frozen = checkpoint.baseline_crafthelm_files?.[CLAUDE_SETTINGS];
+  if (!frozen || !isGitRepo(repoRoot)) return false;
+  const shown = runGit(repoRoot, ['show', `${checkpoint.baseline_git_head}:${CLAUDE_SETTINGS}`]);
+  if (shown.exitCode !== 0) return false;
+  const lf = shown.stdout.replace(/\r\n/g, '\n');
+  // The working copy may have been checked out with CRLF line endings.
+  if (![shown.stdout, lf, lf.replace(/\n/g, '\r\n')].some((text) => sha256Text(text) === frozen)) return false;
+  let baseline;
+  try { baseline = JSON.parse(shown.stdout); } catch { return false; }
+  const current = readClaudeSettings(path.join(repoRoot, CLAUDE_SETTINGS));
+  return !current.error && isOnlyClaudeGuardAddition(baseline, current.data);
+}
+
 function readErrorExcerpt(runDir, stdoutFile, stderrFile) {
   const parts = [];
   for (const rel of [stderrFile, stdoutFile]) {
@@ -496,7 +522,15 @@ export function runVerify(options) {
   const peerHashes = peerArtifactHashes(repoRoot, checkpoint.task_id);
   // A CraftHelm skill reinstalled during the run is the package itself, not an edit to it.
   const managedSkillFiles = currentManagedSkillFiles(repoRoot);
+  // The same reinstall also adds the guard rules of new commands to the project's Claude settings.
+  const guardRulesOnly = rawChangedFiles.includes(CLAUDE_SETTINGS)
+    && !matchesAnyGlob(CLAUDE_SETTINGS, contract.scope.protect)
+    && claudeSettingsOnlyGainedGuards(repoRoot, checkpoint);
+  if (guardRulesOnly && options.progress) {
+    process.stderr.write(`[verify] ${CLAUDE_SETTINGS}: only CraftHelm guard rules were added since the baseline; not counted as a change of this run\n`);
+  }
   const changedFiles = rawChangedFiles.filter((rel) => {
+    if (rel === CLAUDE_SETTINGS && guardRulesOnly) return false;
     if (managedSkillFiles.has(rel) && !matchesAnyGlob(rel, contract.scope.protect)) return false;
     // A sibling task must never exempt changes to this run's own or protected files.
     const baseline = Object.hasOwn(baselineCraftHelm, rel)
@@ -564,9 +598,13 @@ export function runVerify(options) {
       .map((run) => ({ run_id: run.run_id, files: outOfScopeFiles.filter((rel) => matchesAnyGlob(rel, run.allow) && !matchesAnyGlob(rel, run.protect)) }))
       .filter((hit) => hit.files.length > 0);
     const hint = elsewhere.length > 0
-      ? ` (inside the scope of other open runs: ${elsewhere.map((hit) => `${hit.run_id}: ${hit.files.join(', ')}`).join('; ')}. If that work changed them after this run's baseline, this run cannot pass on this tree: decide it before the next run starts, or close it.)`
-      : '';
-    failureReasons.push(`SCOPE_VIOLATION: Out-of-scope file changes: ${outOfScopeFiles.join(', ')}${hint}`);
+      ? `SCOPE_NOTE: The files are inside the scope of other open runs: ${elsewhere.map((hit) => `${hit.run_id}: ${hit.files.join(', ')}`).join('; ')}. If that work changed them after this run's baseline, this run cannot pass on this tree: decide it before the next run starts, or close it.`
+      // Nothing the task wrote: tooling was updated while the run was open.
+      : outOfScopeFiles.every(isToolingBaselineFile)
+        ? `SCOPE_NOTE: Only CraftHelm and host tooling files changed, not the task's own. If you updated the tooling during this run, a person re-freezes their baseline outside the AI session: checkpoint rebaseline --repo <path> --run-id ${runId} --reason "<what was updated>"`
+        : '';
+    failureReasons.push(`SCOPE_VIOLATION: Out-of-scope file changes: ${outOfScopeFiles.join(', ')}`);
+    if (hint) failureReasons.push(hint);
   }
   if (protectedViolations.size > 0) {
     failureReasons.push(`PROTECTED_PATH_VIOLATION: Protected files altered: ${[...protectedViolations].join(', ')}`);
