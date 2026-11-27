@@ -5,13 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { acquireWriterLock, initCheckpoint, replanRun } from '../../scripts/checkpoint.mjs';
-import { addE2eCriterion, approveContractFile } from '../../scripts/contract.mjs';
+import { addE2eCriterion, approveContractFile, checkContractReadiness } from '../../scripts/contract.mjs';
 import { normalizeRequirements, runInterview } from '../../scripts/interview.mjs';
 import { sha256File } from '../../scripts/lib/crypto.mjs';
 import { TIMEOUT_EXIT_CODE, runShellCommand } from '../../scripts/lib/exec.mjs';
-import { runGit } from '../../scripts/lib/git.mjs';
+import { computeSnapshotDigest, runGit } from '../../scripts/lib/git.mjs';
 import { CRAFTHELM_ROOT, getCheckpointPath, getEvidenceManifestPath, getRunDir } from '../../scripts/lib/paths.mjs';
 import { describeSessionStatus } from '../../scripts/lib/scope-guard.mjs';
+import { publishReviewPackage } from '../../scripts/review-package.mjs';
 import { DEFAULT_CHECK_TIMEOUT_MS, resolveCheckTimeoutMs, runVerify } from '../../scripts/verify.mjs';
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -272,6 +273,91 @@ describe('Interview input: a requirement that cannot be read is refused, not pri
       assert.deepEqual(readJson(plain.contract_path).requirements, [{ id: 'REQ-01', statement: 'Convert tables' }]);
     } finally {
       remove(repo);
+    }
+  });
+});
+
+describe('Requirement coverage: a requirement nothing checks is not reported as verified', () => {
+  it('warns before approval, verifies as PARTIAL, and gives the requirement its own row in the review package', () => {
+    const repo = makeRepo();
+    try {
+      const contractPath = writeContract(repo, 'COVER', [
+        { id: 'AC-01', requirement: 'REQ-01', kind: 'e2e', command: 'node --version', expected_exit_code: 0 },
+      ], {
+        host: 'codex',
+        requirements: [{ id: 'REQ-01', statement: 'Tables keep their | separators' }, { id: 'REQ-02', statement: 'Figures keep captions' }],
+      });
+      const contract = readJson(contractPath);
+      const warning = checkContractReadiness(contract).warnings.find((w) => w.code === 'REQUIREMENT_WITHOUT_ACCEPTANCE');
+      assert.match(warning.message, /^No acceptance check refers to REQ-02; verify will report it as unverified and the run will be PARTIAL, not VERIFIED\.$/);
+      // A contract written before requirements were recorded has nothing to report.
+      assert.ok(!checkContractReadiness({ ...contract, requirements: undefined }).warnings.some((w) => w.code === 'REQUIREMENT_WITHOUT_ACCEPTANCE'));
+
+      approveContractFile(contractPath, 'operator');
+      initCheckpoint({ repo, contract: contractPath, runId: 'COVER-RUN' });
+      fs.writeFileSync(path.join(repo, 'src', 'app.mjs'), 'export const val = 2;\n', 'utf8');
+      const v = runVerify({ repo, runId: 'COVER-RUN' });
+      assert.equal(v.technical_status, 'PARTIAL');
+      const stamp = readJson(path.join(getRunDir(repo, 'COVER-RUN'), 'evidence', 'verification-stamp.json'));
+      assert.deepEqual(stamp.unverified, ['REQ-02 has no acceptance check (Figures keep captions)']);
+
+      // The stages are timed, and the lite size limits say that they are not applied here.
+      assert.deepEqual(Object.keys(v.stage_times_ms), ['snapshot of the working tree', 'scope and diff', 'impact analysis', 'acceptance checks', 'reliability rules and review', 'evidence records']);
+      assert.ok(Object.values(v.stage_times_ms).every((ms) => Number.isInteger(ms) && ms >= 0));
+      assert.deepEqual([v.process_profile.profile, v.process_profile.limits_enforced], ['full', false]);
+
+      const pkg = publishReviewPackage({ repo, runId: 'COVER-RUN', kouetsuRoot: path.join(CRAFTHELM_ROOT, 'hosts', 'codex', 'skills', 'kouetsu') });
+      const report = fs.readFileSync(path.join(getRunDir(repo, 'COVER-RUN'), 'reports', 'review-package.md'), 'utf8');
+      assert.match(report, /\| `AC-01` \| `REQ-01` Tables keep their &#124; separators \| e2e \| PASS \|/);
+      assert.match(report, /\| `REQ-02` \| Figures keep captions \| 수용 기준 없음 \| UNVERIFIED \| `none` \|/);
+      assert.match(report, /\| 승인하면 달라지는 것 \| Set val to 2 \(이 중 `REQ-02`은 수용 기준이 없어 검증되지 않았습니다\) \|/);
+      // The command a person copies runs from the target repository, not only from the CraftHelm checkout.
+      const cliPath = path.join(CRAFTHELM_ROOT, 'scripts', 'crafthelm.mjs').replace(/\\/g, '/');
+      assert.ok(report.includes(`node "${cliPath}" approve record --repo "${repo.replace(/\\/g, '/')}" --run-id COVER-RUN --decision accept`), pkg.status);
+      assert.doesNotMatch(report, /node scripts\/approval\.mjs record/);
+    } finally {
+      remove(repo);
+    }
+  });
+});
+
+describe('Snapshot: the tree git sees', () => {
+  it('follows tracked and untracked files, leaves ignored ones out, and still walks a directory that is not a repository', () => {
+    const repo = makeRepo();
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-plain-'));
+    try {
+      const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true }); fs.writeFileSync(path.join(repo, rel), text, 'utf8'); };
+      write('.gitignore', 'output/\n');
+      const hashed = new Map();
+      const base = computeSnapshotDigest(repo, { fileHashes: hashed });
+
+      // Build output under an ignored directory neither changes the snapshot nor is read.
+      write('output/page-0001.json', '{}');
+      const again = new Map();
+      assert.equal(computeSnapshotDigest(repo, { fileHashes: again }), base);
+      assert.deepEqual([...again.keys()].sort(), ['.gitignore', 'README.md', 'src/app.mjs']);
+
+      // An untracked file that is not ignored counts, under its real name, and so does an edit or a deletion.
+      write('src/새 파일.mjs', 'export {};\n');
+      const withNew = new Map();
+      const afterNew = computeSnapshotDigest(repo, { fileHashes: withNew });
+      assert.notEqual(afterNew, base);
+      assert.ok(withNew.has('src/새 파일.mjs'));
+      write('src/app.mjs', 'export const val = 2;\n');
+      const afterEdit = computeSnapshotDigest(repo);
+      assert.notEqual(afterEdit, afterNew);
+      fs.rmSync(path.join(repo, 'README.md'));
+      assert.notEqual(computeSnapshotDigest(repo), afterEdit);
+
+      // Not a repository: nothing says what to ignore, so every file is taken.
+      fs.writeFileSync(path.join(plain, 'a.txt'), 'a', 'utf8');
+      const first = computeSnapshotDigest(plain);
+      fs.mkdirSync(path.join(plain, 'output'));
+      fs.writeFileSync(path.join(plain, 'output', 'b.txt'), 'b', 'utf8');
+      assert.notEqual(computeSnapshotDigest(plain), first);
+    } finally {
+      remove(repo);
+      remove(plain);
     }
   });
 });

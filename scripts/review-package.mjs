@@ -5,6 +5,7 @@ import { sha256File } from './lib/crypto.mjs';
 import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest } from './lib/git.mjs';
 import { KOUETSU_FALLBACK_VERSION, runEditorialCheck, verifyKouetsuAsset } from './lib/kouetsu-check.mjs';
+import { cliInvocation, requirementsWithoutAcceptance, toPosixPath } from './lib/paths.mjs';
 import {
   getCheckpointPath,
   getContractPath,
@@ -33,7 +34,7 @@ function relFromReports(runRelPath) {
   return `../${runRelPath}`;
 }
 
-function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, preset, impact }) {
+function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, preset, impact, repoRoot }) {
   const e2eChecks = manifest.checks.filter((c) => c.kind === 'e2e');
   const e2eStatus = e2eChecks.length === 0
     ? 'UNVERIFIED'
@@ -56,6 +57,11 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
   const diffCheck = manifest.checks.find((c) => c.kind === 'differential');
   const triggeredRules = manifest.reliability_checks.filter((r) => r.triggered);
 
+  // One table cell: no line breaks, and a pipe would start a new cell.
+  const cell = (text) => String(text).replace(/\s*\r?\n\s*/g, ' ').replaceAll('|', '&#124;');
+  const statements = new Map((contract.requirements ?? []).map((r) => [r.id, r.statement]));
+  const expected = (reqId) => (statements.has(reqId) ? `\`${reqId}\` ${cell(statements.get(reqId))}` : reqId);
+  const uncovered = requirementsWithoutAcceptance(contract);
   const acRows = manifest.checks.map((c) => {
     const evLink = c.stdout_file
       ? relFromReports(c.stdout_file)
@@ -67,8 +73,12 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
       : c.status === 'SKIPPED_UNIMPACTED'
         ? `선택적 회귀 생략 (${c.selection_reason ?? 'unimpacted'})`
         : '기계적 검사 로그 및 기대 동작 일치 확인';
-    return `| \`${c.id}\` | ${c.requirement ?? c.id} | ${c.kind} | ${c.status} | \`${evLink}\` | ${manualHint} |`;
+    return `| \`${c.id}\` | ${c.requirement ? expected(c.requirement) : c.id} | ${c.kind} | ${c.status} | \`${evLink}\` | ${manualHint} |`;
   });
+  // A requirement without a check gets its own row, so the table cannot be read as covering it.
+  for (const req of uncovered) {
+    acRows.push(`| \`${req.id}\` | ${cell(req.statement)} | 수용 기준 없음 | UNVERIFIED | \`none\` | 이 요구는 검사한 항목이 없습니다. 구현 여부를 직접 확인해야 합니다 |`);
+  }
 
   const testLogLinks = manifest.checks
     .filter((c) => c.stdout_file)
@@ -176,7 +186,7 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     `| 작업 | \`${contract.task_id}\` — ${contract.title ?? contract.request} |`,
     `| 이번 승인 대상 | ${contract.scope.allow.join(', ')} (${manifest.scope.changed_files.length}개 파일 변경) |`,
     `| 실행 계약 승인 | \`${contract.approval?.contract_approved_by ?? 'unknown'}\` — 승인 경로: \`${contract.approval?.contract_approved_via ?? 'unknown'}\` (\`agent_session\`이면 AI 세션 안에서 실행된 승인) |`,
-    `| 승인하면 달라지는 것 | ${contract.request} |`,
+    `| 승인하면 달라지는 것 | ${cell(contract.request)}${uncovered.length > 0 ? ` (이 중 ${uncovered.map((r) => `\`${r.id}\``).join(', ')}은 수용 기준이 없어 검증되지 않았습니다)` : ''} |`,
     `| 자동 검증 상태 | **${manifest.technical_status}** — 근거: \`../evidence-manifest.json\` |`,
     `| 검증 수준 | **${manifest.verification_level}** — \`none/partial/verified\`는 수행된 기술 검사의 범위만 의미 |`,
     `| 절차 프로필 | ${profileText} |`,
@@ -270,7 +280,7 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     '- **추가 검증:** 필요한 증거나 사용자 테스트를 지정합니다.',
     '- **반려:** 이번 산출물을 인수하지 않습니다.',
     '',
-    `결정이 입력될 때만 사람 승인 레코드를 생성합니다 (\`node scripts/approval.mjs record --repo . --run-id ${manifest.run_id} --decision accept --actor <이름> --rationale "<사유>"\`). 이 명령은 AI 세션 밖의 터미널에서 승인자가 직접 실행해야 하며, AI 세션 안에서는 거부됩니다. AI가 이 칸을 임의로 채우거나 승인으로 해석하지 않습니다.`,
+    `결정이 입력될 때만 사람 승인 레코드를 생성합니다 (\`${cliInvocation(repoRoot)} approve record --repo "${toPosixPath(repoRoot)}" --run-id ${manifest.run_id} --decision accept --actor <이름> --rationale "<사유>"\`). 이 명령은 AI 세션 밖의 터미널에서 승인자가 직접 실행해야 하며, AI 세션 안에서는 거부됩니다. AI가 이 칸을 임의로 채우거나 승인으로 해석하지 않습니다.`,
     '',
   ].join('\n');
 }
@@ -410,7 +420,7 @@ export function publishReviewPackage(options) {
 
   const markdownText = options.draftOverride
     ? fs.readFileSync(path.resolve(options.draftOverride), 'utf8').replace(/\r\n/g, '\n')
-    : renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, preset, impact });
+    : renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, preset, impact, repoRoot });
 
   fs.writeFileSync(reportPath, markdownText, 'utf8');
 

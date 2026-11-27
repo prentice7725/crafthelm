@@ -117,7 +117,7 @@ describe('Batch 1 CLI Safety, Task Isolation, E2E Readiness & Timeout Separation
         repo, request: 'Fix calculation', changeKind: 'bugfix', docsDir: 'notes/task',
         inputData: {
           scope: { allow: ['src/calc.mjs'], protect: ['README.md'] },
-          acceptance: [{ id: 'AC-01', requirement: 'REQ-02', kind: 'e2e', applicable: false, not_applicable_reason: 'Unavailable' }],
+          acceptance: [{ id: 'AC-01', requirement: 'REQ-01', kind: 'e2e', applicable: false, not_applicable_reason: 'Unavailable' }],
         },
       });
       assert.equal(validateContractFile(iv.contract_path).policy_ready, false);
@@ -134,7 +134,7 @@ describe('Batch 1 CLI Safety, Task Isolation, E2E Readiness & Timeout Separation
       const after = JSON.parse(fs.readFileSync(iv.contract_path, 'utf8'));
       const added = after.acceptance.pop();
       assert.equal(added.id, 'AC-02');
-      assert.equal(added.requirement, 'REQ-02');
+      assert.equal(added.requirement, 'REQ-01');
       assert.equal(added.command, 'node --version');
       assert.deepEqual(after, before);
       const doc = fs.readFileSync(acDoc, 'utf8');

@@ -114,3 +114,20 @@ Diff hunk와 다언어(JS/TS, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby, P
 - RED 기록(`verify --record-red`)에서 명령이 시간 초과되면 `RED_TIMEOUT`으로 거부한다. 끝나지 않은 명령은 기능이 없어서 실패한 것으로 볼 수 없다.
 - 뮤테이션 검사는 각 명령을 `verify`에서 통과할 때와 같은 제한 시간으로 다시 실행한다.
 - `verify`가 도는 동안 파일을 고치면 증거가 시작 시점의 스냅샷에 묶인 채로 트리만 달라진다. 이 상태는 `review-package`와 `approve record`가 현재 스냅샷을 다시 계산해 `STALE`로 거부하므로 승인까지 가지 않는다. `verify`를 다시 실행하면 풀린다.
+
+### 18. 요구사항별 검증 범위와 단계별 소요 시간 (`scripts/verify.mjs`, `scripts/review-package.mjs`)
+
+- 계약의 `requirements` 가운데 적용되는 수용 기준이 하나도 가리키지 않는 요구는 검증된 것이 아니다. `contract validate`와 `approve`는 `REQUIREMENT_WITHOUT_ACCEPTANCE` 경고를 내고, `verify`는 그 요구를 미검증 항목에 넣어 `technical_status`를 `VERIFIED`가 아닌 `PARTIAL`로 둔다.
+- 검토 보고서 3절은 수용 기준마다 요구 ID와 요구 문구를 함께 보여 주고, 수용 기준이 없는 요구는 `UNVERIFIED` 행으로 따로 싣는다. 1절의 "승인하면 달라지는 것"에도 검증되지 않은 요구 ID를 적는다.
+- `requirements`가 없는 예전 계약에는 이 검사가 적용되지 않는다.
+- `verify`는 단계(작업 트리 스냅샷, 범위와 diff, 영향도 분석, 수용 기준 실행, 신뢰성 규칙과 리뷰, 뮤테이션 검사, 증거 기록)마다 걸린 시간을 표준 오류에 출력하고 결과의 `stage_times_ms`에 싣는다.
+- 매니페스트의 `process_profile.limits_enforced`는 크기 한도가 실제로 적용되는지를 뜻한다. 한도는 경량 프로필의 E2E 면제를 판정할 때만 쓰이므로 전체 프로필에서는 `false`이고, 관측값이 한도를 넘어도 `violations`는 비어 있다.
+- 선택적 회귀(`--selective`)에서도 대상 파일을 알 수 없는 포괄 명령(`pytest -q` 등)은 안전을 위해 실행한다. 건너뛰게 하려면 그 수용 기준에 `target_files`를 적어 영향 범위와 대조할 수 있게 한다.
+
+### 19. 스냅샷의 범위 (`scripts/lib/git.mjs`의 `computeSnapshotDigest`)
+
+- git 저장소에서 `target_snapshot_digest`는 git이 보는 트리, 곧 추적 파일과 무시되지 않은 미추적 파일로 계산한다. `verify`가 범위와 diff를 git으로 읽으므로 판정 대상과 스냅샷 대상이 같아진다.
+- git이 무시하는 파일(빌드 산출물, 가상 환경 등)은 스냅샷에 들어가지 않는다. 이런 디렉터리에 파일이 십만 개 넘게 쌓인 저장소에서 `verify`, `replan`, `status`가 매번 수 분씩 걸리던 원인이었다.
+- 그 결과 검증 뒤 승인 전에 무시 파일이 바뀌어도 `STALE`이 되지 않는다. 바뀌면 안 되는 경로는 git이 무시하더라도 계약의 `scope.protect`에 적는다. 보호 경로는 실행을 열 때 따로 해시하고 `verify`와 `checkpoint resume`에서 대조한다.
+- git 저장소가 아닌 디렉터리에서는 전과 같이 모든 파일을 훑는다. `.crafthelm/runs/`, `.git/`, `node_modules/`는 어느 경우에도 제외한다.
+- 이 변경 전에 계산한 스냅샷 값은 무시 파일이 있던 저장소에서 지금 값과 다르다. 진행 중이거나 승인 대기 중인 실행은 `verify`를 다시 실행해야 한다.

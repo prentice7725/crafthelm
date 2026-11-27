@@ -1,3 +1,4 @@
+import { requirementsWithoutAcceptance } from './lib/paths.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
@@ -63,6 +64,16 @@ export function checkContractReadiness(contract) {
         guidance: 'Add the command that runs the test for the changed code: contract add-test <contract> --test-cmd "<command>" (or pass --test-cmd to start).',
       });
     }
+  }
+
+  // A requirement nothing checks is approved and reviewed as if it were covered.
+  const uncovered = requirementsWithoutAcceptance(contract);
+  if (uncovered.length > 0) {
+    warnings.push({
+      code: 'REQUIREMENT_WITHOUT_ACCEPTANCE',
+      message: `No acceptance check refers to ${uncovered.map((r) => r.id).join(', ')}; verify will report ${uncovered.length === 1 ? 'it' : 'them'} as unverified and the run will be PARTIAL, not VERIFIED.`,
+      guidance: 'Add an acceptance item for each (kind "manual" with manual_method when it can only be checked by a person), or remove the requirement from this contract.',
+    });
   }
 
   for (const ac of Array.isArray(contract?.acceptance) ? contract.acceptance : []) {
