@@ -139,6 +139,21 @@ export function listActiveScopes(repoRoot) {
   return scopes;
 }
 
+/**
+ * The runs whose scope decides a write. A run waiting on a person is not being worked on: applying
+ * its scope.protect too would let every undecided run lock more of the repository, including paths
+ * the run in progress is allowed to change. Among the runs in progress, one holding the writer lock
+ * is the one writing. With nothing in progress the waiting runs still apply, as before.
+ * @param {string} repoRoot
+ * @param {ReturnType<typeof listActiveScopes>} scopes
+ */
+export function writableScopes(repoRoot, scopes) {
+  const open = scopes.filter((run) => !WAITING_ON_A_PERSON[run.state]);
+  if (open.length === 0) return scopes;
+  const locked = open.filter((run) => readWriterLock(repoRoot, run.run_id));
+  return locked.length > 0 ? locked : open;
+}
+
 function isGitIgnored(repoRoot, rel) {
   const res = spawnSync('git', ['check-ignore', '-q', '--', rel], { cwd: repoRoot, windowsHide: true, timeout: 5000 });
   return res.status === 0;
@@ -180,7 +195,8 @@ export function evaluateWrite(params) {
     );
   }
 
-  const scopes = listActiveScopes(repoRoot);
+  const activeScopes = listActiveScopes(repoRoot);
+  const scopes = writableScopes(repoRoot, activeScopes);
   if (scopes.length === 0) {
     // Opt-in per repository: with `require_run_for_edits` in .crafthelm/config.json, a change needs
     // an open run. Off by default, because it also stops a one-line fix nobody wanted a contract for.

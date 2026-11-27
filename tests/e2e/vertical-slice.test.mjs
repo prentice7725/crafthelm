@@ -752,6 +752,19 @@ describe('CraftHelm M0 Vertical Slice E2E Tests (Flows A-N)', () => {
 
       // Modify only src/auth.mjs
       fs.writeFileSync(path.join(repo, 'src/auth.mjs'), 'export function login(ok) { return ok ? "token-v2" : null; }\n', 'utf8');
+      // The first round runs the billing check too: it has no pass in this run to carry over, and
+      // skipping it would report REQ-02 as verified by a check that never ran.
+      const v0 = runVerify({ repo, runId: 'RUN-L', selective: true });
+      assert.equal(v0.ok, true);
+      assert.deepEqual([v0.regression_selection.executed_count, v0.regression_selection.skipped_count], [3, 0]);
+      const manifest0 = JSON.parse(fs.readFileSync(path.join(getRunDir(repo, 'RUN-L'), 'evidence-manifest.json'), 'utf8'));
+      assert.deepEqual(
+        [manifest0.checks.find((c) => c.id === 'AC-BILLING').status, manifest0.checks.find((c) => c.id === 'AC-BILLING').selection_reason],
+        ['PASS', 'no_earlier_pass_in_this_run'],
+      );
+
+      // A later round on another auth edit carries that pass over.
+      fs.writeFileSync(path.join(repo, 'src/auth.mjs'), 'export function login(ok) { return ok ? "token-v2" : null; } // second edit\n', 'utf8');
       const v1 = runVerify({ repo, runId: 'RUN-L', selective: true });
       assert.equal(v1.ok, true);
       assert.equal(v1.regression_selection.mode, 'selective');

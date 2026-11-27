@@ -36,6 +36,7 @@ import { recoverInterruptedProbe, runMutationProbe } from './lib/mutation-probe.
 import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-observations.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
+import { listActiveScopes } from './lib/scope-guard.mjs';
 import { extractCommandTargets } from './lib/test-runners.mjs';
 import { appendVerifyRound, formatVerifyHistoryText, readVerifyHistory, summarizeVerifyHistory } from './lib/verify-history.mjs';
 import { assertNoForeignWriterLock } from './lib/writer-lock.mjs';
@@ -555,7 +556,17 @@ export function runVerify(options) {
 
   const scopeStatus = outOfScopeFiles.length === 0 && protectedViolations.size === 0 && !policy.tamperDetected ? 'PASS' : 'FAIL';
   if (outOfScopeFiles.length > 0) {
-    failureReasons.push(`SCOPE_VIOLATION: Out-of-scope file changes: ${outOfScopeFiles.join(', ')}`);
+    // The diff runs from this run's baseline to the tree as it is now, so work done since under
+    // another contract shows up here too. It is still reported: nothing in a sibling run exempts a
+    // path. Saying whose scope the files fall in tells the reader this is not a stray edit.
+    const others = listActiveScopes(repoRoot).filter((run) => run.run_id !== runId);
+    const elsewhere = others
+      .map((run) => ({ run_id: run.run_id, files: outOfScopeFiles.filter((rel) => matchesAnyGlob(rel, run.allow) && !matchesAnyGlob(rel, run.protect)) }))
+      .filter((hit) => hit.files.length > 0);
+    const hint = elsewhere.length > 0
+      ? ` (inside the scope of other open runs: ${elsewhere.map((hit) => `${hit.run_id}: ${hit.files.join(', ')}`).join('; ')}. If that work changed them after this run's baseline, this run cannot pass on this tree: decide it before the next run starts, or close it.)`
+      : '';
+    failureReasons.push(`SCOPE_VIOLATION: Out-of-scope file changes: ${outOfScopeFiles.join(', ')}${hint}`);
   }
   if (protectedViolations.size > 0) {
     failureReasons.push(`PROTECTED_PATH_VIOLATION: Protected files altered: ${[...protectedViolations].join(', ')}`);
@@ -566,6 +577,15 @@ export function runVerify(options) {
   const checks = [];
   const unverified = [];
   let hasBlocked = false;
+
+  // Checks that already passed in this run, with the command they passed under.
+  const passedEarlier = new Map();
+  for (const round of readVerifyHistory(runDir)) {
+    for (const c of round.checks ?? []) {
+      if (c.status === 'PASS') passedEarlier.set(c.id, c.command ?? null);
+    }
+  }
+  const baselineGreen = checkpoint.baseline_green_records ?? {};
 
   for (const ac of contract.acceptance) {
     if (ac.applicable === false) {
@@ -591,7 +611,13 @@ export function runVerify(options) {
       continue;
     }
 
-    const selection = decideSelectiveExecution(ac, impact, contract, selectiveRequested);
+    let selection = decideSelectiveExecution(ac, impact, contract, selectiveRequested);
+    // Skipping a check carries its earlier result over. A check with no pass in this run has nothing
+    // to carry: impact analysis only says the change does not reach it, and a requirement whose
+    // check never ran would be reported as verified.
+    if (!selection.execute && passedEarlier.get(ac.id) !== ac.command && !Object.hasOwn(baselineGreen, ac.id)) {
+      selection = { execute: true, reason: 'no_earlier_pass_in_this_run' };
+    }
     if (!selection.execute) {
       checks.push({
         id: ac.id,
