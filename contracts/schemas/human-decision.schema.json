@@ -45,6 +45,14 @@
     "repro_conditions": {
       "type": "string"
     },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_ids"],
+      "properties": {
+        "run_ids": { "type": "array", "minItems": 2, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "verification_type": {
       "type": "string",
       "enum": [
