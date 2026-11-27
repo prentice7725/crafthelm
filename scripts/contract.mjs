@@ -308,9 +308,18 @@ if (isMainModule(import.meta.url)) {
   }
   const args = parseArgs(argv);
   const subcommand = args._[0];
-  const target = args.contract ?? args._[1];
+  // The contract can be named by path or by task id (.crafthelm/contracts/<id>.json under --repo).
+  const target = args.contract ?? args._[1]
+    ?? (typeof args['task-id'] === 'string' ? getContractPath(path.resolve(typeof args.repo === 'string' ? args.repo : '.'), args['task-id']) : undefined);
 
   try {
+    const known = ['validate', 'plan', 'add-e2e', 'add-test', 'approve'];
+    if (known.includes(subcommand) && typeof target !== 'string') {
+      throw new Error(`contract ${subcommand} needs the contract file: contract ${subcommand} <contractPath>${subcommand === 'approve' ? ' --actor <name> [--init-run --repo <path> --run-id <id>]' : ''} (or --task-id <id> with --repo <path>). Contracts live in .crafthelm/contracts/<task-id>.json.`);
+    }
+    if (known.includes(subcommand) && !fs.existsSync(target)) {
+      throw new Error(`Contract not found at ${target}. Run "status --repo <path>" to list pending contracts.`);
+    }
     if (subcommand === 'validate') {
       const res = validateContractFile(target);
       process.stdout.write(
@@ -337,9 +346,10 @@ if (isMainModule(import.meta.url)) {
       const res = planFromContract(target);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'approve') {
+      const channel = classifyApprovalChannel();
       const approve = () => approveContractFile(target, args.actor, {
         strictReadiness: Boolean(args.strict) || Boolean(args['init-run']),
-        channel: classifyApprovalChannel(),
+        channel,
       });
       let res;
       if (args['init-run']) {
@@ -357,6 +367,10 @@ if (isMainModule(import.meta.url)) {
         res = approve();
       }
       for (const w of res.warnings ?? []) process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
+      if (channel === 'agent_session') {
+        // The name in --actor is whatever the caller typed; say plainly what the record will show.
+        process.stderr.write(`[notice] This approval ran inside an AI agent session. It is recorded as contract_approved_via "agent_session" with actor "${String(args.actor).trim()}", and the review package shows that. Use a person's name only if that person approved this contract in the conversation.\n`);
+      }
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else {
       throw new Error('Usage: contract.mjs <validate|plan|add-e2e|add-test|approve> <contractPath> [options]');

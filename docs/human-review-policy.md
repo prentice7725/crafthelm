@@ -48,7 +48,7 @@
 
 ## 계약 승인과 단계 승인
 
-실행 계약 승인(`contract approve`, `interview --approve-contract`)은 실행 권한만 주므로 에이전트 세션에서도 막지 않는다. 대신 승인 경로를 `approval.contract_approved_via`(`programmatic`, `agent_session`, `interactive_terminal`, `non_interactive`)에 남기고 검토 보고서 1절에 표시한다. Claude Code 권한 예시(`hosts/claude/settings.example.json`)는 계약 승인과 단계 승인을 `ask`로, 최종 인수 기록과 키 생성을 `deny`로 둔다. 이 승인 관련 규칙은 `install-skills`(claude 대상)와 `init-host --host claude`가 실제 `settings.json`에 추가하고(`scripts/lib/claude-permissions.mjs`), `doctor --host claude`가 사용자·프로젝트·로컬 설정을 합쳐 빠진 규칙을 `CLAUDE_PERMISSION_GUARDS_MISSING`으로 경고한다. 예시의 나머지 규칙(`git push`, `rm -rf`, 허용 목록)은 사용자 설정에 쓰지 않는다. 이 규칙도 사용자가 설정 파일을 고치면 사라지므로 통제 수단이 아니라 실수 방지 장치다. 에이전트의 의도적 우회에 대한 통제는 서명 승인자 정책이다.
+실행 계약 승인(`contract approve`, `interview --approve-contract`)은 실행 권한만 주므로 에이전트 세션에서도 막지 않는다. 그렇다고 에이전트가 스스로 판단해 승인하는 단계는 아니다. 스킬 지시문은 계약의 범위와 수용 기준을 사용자에게 보여 주고 대화에서 명시적인 동의를 받은 뒤에만 승인 명령을 실행하도록 하며, `--actor`에는 그렇게 동의한 사람의 이름만 쓰게 한다. `--actor`는 호출자가 입력한 문자열이라 스크립트가 진위를 확인할 수 없으므로, 에이전트 세션에서 실행된 승인은 그 사실을 stderr로 알리고 기록에 남긴다. 대신 승인 경로를 `approval.contract_approved_via`(`programmatic`, `agent_session`, `interactive_terminal`, `non_interactive`)에 남기고 검토 보고서 1절에 표시한다. Claude Code 권한 예시(`hosts/claude/settings.example.json`)는 계약 승인과 단계 승인을 `ask`로, 최종 인수 기록과 키 생성을 `deny`로 둔다. 이 승인 관련 규칙은 `install-skills`(claude 대상)와 `init-host --host claude`가 실제 `settings.json`에 추가하고(`scripts/lib/claude-permissions.mjs`), `doctor --host claude`가 사용자·프로젝트·로컬 설정을 합쳐 빠진 규칙을 `CLAUDE_PERMISSION_GUARDS_MISSING`으로 경고한다. 예시의 나머지 규칙(`git push`, `rm -rf`, 허용 목록)은 사용자 설정에 쓰지 않는다. 이 규칙도 사용자가 설정 파일을 고치면 사라지므로 통제 수단이 아니라 실수 방지 장치다. 에이전트의 의도적 우회에 대한 통제는 서명 승인자 정책이다.
 
 ## 승인 무효화 규칙
 

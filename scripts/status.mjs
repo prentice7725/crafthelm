@@ -4,6 +4,7 @@ import { statusCheckpoint } from './checkpoint.mjs';
 import { checkContractReadiness } from './contract.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { explainRun, formatExplainText } from './lib/explain-run.mjs';
+import { computeSnapshotDigest } from './lib/git.mjs';
 import { getCheckpointPath, toPosixPath } from './lib/paths.mjs';
 import { STATES } from './lib/state-machine.mjs';
 
@@ -137,13 +138,17 @@ function collectWorkspaceRuns(repoRoot, repoArg) {
   if (!fs.existsSync(runsRoot)) return [];
 
   const runs = [];
+  // One digest for the listing. Hashing the tree again for every run made status take minutes in a
+  // repository with large files and a few past runs.
+  let currentSnapshot = null;
   for (const entry of fs.readdirSync(runsRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const cpPath = getCheckpointPath(repoRoot, entry.name);
     if (!fs.existsSync(cpPath)) continue;
 
     const cpRaw = readJsonSafe(cpPath);
-    const summary = statusCheckpoint({ repo: repoRoot, runId: entry.name });
+    currentSnapshot ??= computeSnapshotDigest(repoRoot);
+    const summary = statusCheckpoint({ repo: repoRoot, runId: entry.name, currentSnapshot });
     const recommendation = recommendNextActionForRun(summary, repoArg);
     runs.push({
       ...summary,

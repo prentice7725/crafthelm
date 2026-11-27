@@ -32,6 +32,17 @@
 - 한계: 훅은 Claude Code의 파일 도구 호출만 본다. 셸 리디렉션이나 파일을 쓰는 스크립트 실행은 지나간다. 훅 자체가 실패하면(잘못된 입력, 스크립트 누락) 쓰기를 허용한다. 설정 파일을 고칠 수 있는 사람은 훅을 지울 수 있다. 그래서 훅은 범위 이탈을 일찍 알려 주는 장치이고, 판정의 근거는 여전히 `verify`의 `SCOPE_VIOLATION`·`PROTECTED_PATH_VIOLATION`이다.
 - Codex와 Antigravity에는 아직 등록 경로가 없다. 이 호스트에서는 `verify`의 사후 판정만 적용된다.
 
+## 세션 상태 훅 (Claude Code)
+
+스킬 지시문은 스킬을 부른 순간에 한 번 읽힐 뿐이고, 그 뒤 턴에서는 절차를 다시 알려 주는 것이 없다. 세션 상태 훅(`scripts/hooks/session-status.mjs`)은 Claude Code의 `SessionStart`와 `UserPromptSubmit`에 등록되어, 출력한 문장이 에이전트의 컨텍스트에 들어간다.
+
+- 활성 실행이 있으면 프롬프트마다 실행 ID와 상태, `scope.allow`와 `scope.protect`, 수정 뒤 실행할 `verify` 명령, `status --explain` 명령을 알려 준다.
+- 상태가 `READY_FOR_HUMAN_REVIEW`, `BLOCKED_HUMAN_ATTENTION`, `BLOCKED`, `REPLAN_REQUIRED`이면 검증 명령 대신 멈추고 사람에게 넘기라는 문장을 낸다.
+- 활성 실행이 없으면 세션을 시작할 때만 한 줄로 `start` 명령과 계약 승인은 사용자가 한다는 점을 알리고, 그 뒤 프롬프트에서는 아무것도 내지 않는다.
+- 체크포인트와 계약 파일만 읽고 저장소 전체를 해시하지 않으므로 큰 저장소에서도 프롬프트를 늦추지 않는다. 훅이 실패하면 아무것도 출력하지 않고 종료 코드 0으로 끝난다.
+- 범위 가드와 같은 방식으로 프로젝트 설정에만 등록하며(`--skip-claude-hooks`로 둘 다 생략), `doctor --host claude --repo <repo>`가 빠진 등록을 `CLAUDE_STATUS_HOOK_MISSING`으로 알린다.
+- 한계: 이 훅은 알려 줄 뿐 막지 않는다. 쓰기를 막는 것은 범위 가드이고, 판정은 `verify`가 한다. 저장소를 CraftHelm 대상으로 보는 기준은 `.crafthelm` 아래에 `config.json`, `contracts`, `runs` 중 하나가 있는 것이다. 승인자 키만 둔 홈 디렉터리의 `.crafthelm`은 대상이 아니다.
+
 ## 외부 Skill 감사 파이프라인
 
 1. 외부 스킬은 발견 → 정적 검사 → 권한 검토 → 샌드박스 시험 → 골든 평가 → 승인 절차를 거쳐 등록한다.

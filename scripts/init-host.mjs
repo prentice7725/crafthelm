@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
 import { SKILL_MODULES, renderHostSkillMarkdown } from './install-skills.mjs';
-import { applyClaudeScopeHook } from './lib/claude-hooks.mjs';
+import { applyClaudeScopeHook, applyClaudeStatusHook } from './lib/claude-hooks.mjs';
 import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { collectRelativeFiles } from './lib/crypto.mjs';
@@ -76,6 +76,7 @@ export function initHost(options = {}) {
   const skipped = [];
   let claudePermissions = null;
   let claudeScopeHook = null;
+  let claudeStatusHook = null;
 
   const universalKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'universal', 'skills', 'kouetsu');
   const codexKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'codex', 'skills', 'kouetsu');
@@ -180,6 +181,11 @@ export function initHost(options = {}) {
       if (['ADDED', 'UPDATED'].includes(claudeScopeHook.action) && !written.includes(claudeScopeHook.settings_path)) {
         written.push(claudeScopeHook.settings_path);
       }
+      // The status hook repeats the open run and its scope on every turn; a skill is only read once.
+      claudeStatusHook = applyClaudeStatusHook({ settingsPath: path.join(repoRoot, '.claude', 'settings.json') });
+      if (['ADDED', 'UPDATED'].includes(claudeStatusHook.action) && !written.includes(claudeStatusHook.settings_path)) {
+        written.push(claudeStatusHook.settings_path);
+      }
     }
   }
 
@@ -210,6 +216,7 @@ export function initHost(options = {}) {
     skipped,
     ...(claudePermissions ? { claude_permissions: claudePermissions } : {}),
     ...(claudeScopeHook ? { claude_scope_hook: claudeScopeHook } : {}),
+    ...(claudeStatusHook ? { claude_status_hook: claudeStatusHook } : {}),
   };
 }
 

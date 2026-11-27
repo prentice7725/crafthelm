@@ -709,7 +709,8 @@ export function statusCheckpoint(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
-  const currentSnapshot = computeSnapshotDigest(repoRoot);
+  // The digest covers the whole tree; a caller listing many runs computes it once and passes it in.
+  const currentSnapshot = options.currentSnapshot ?? computeSnapshotDigest(repoRoot);
   return {
     run_id: checkpoint.run_id,
     task_id: checkpoint.task_id,
@@ -745,7 +746,14 @@ if (isMainModule(import.meta.url)) {
   const sub = args._[0];
   try {
     let out;
-    if (sub === 'init') out = initCheckpoint({ repo: args.repo, contract: args.contract, runId: args['run-id'], docsDir: args['docs-dir'] });
+    if (sub === 'init') {
+      const contract = args.contract ?? (typeof args['task-id'] === 'string' ? getContractPath(path.resolve(args.repo ?? '.'), args['task-id']) : undefined);
+      if (typeof contract !== 'string') {
+        throw new Error('checkpoint init needs the contract: checkpoint init --repo <path> --contract <contractPath> [--run-id <id>] (or --task-id <id> to use .crafthelm/contracts/<id>.json)');
+      }
+      out = initCheckpoint({ repo: args.repo, contract, runId: args['run-id'], docsDir: args['docs-dir'] });
+    }
+    else if (!args['run-id'] || args['run-id'] === true) throw new Error(`checkpoint ${sub ?? ''} needs --run-id <id>. Run "status --repo <path>" to list runs.`.replace('  ', ' '));
     else if (sub === 'acquire-lock') out = acquireWriterLock({ repo: args.repo, runId: args['run-id'], writer: args.writer });
     else if (sub === 'release-lock') out = releaseWriterLock({ repo: args.repo, runId: args['run-id'], writer: args.writer, force: Boolean(args.force) });
     else if (sub === 'stage') out = recordStage({ repo: args.repo, runId: args['run-id'], stage: args.stage ?? args._[1], status: args.status, contract: args.contract, writer: args.writer });

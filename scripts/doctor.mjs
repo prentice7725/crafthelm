@@ -1,6 +1,6 @@
 import { BUILTIN_CLI_HOSTS, getHostAdapter, normalizeHostId } from '../hosts/registry.mjs';
 import { getSkillsInstallStatus } from './install-skills.mjs';
-import { inspectClaudeScopeHook } from './lib/claude-hooks.mjs';
+import { inspectClaudeScopeHook, inspectClaudeStatusHook } from './lib/claude-hooks.mjs';
 import { inspectClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { runCommand } from './lib/exec.mjs';
@@ -88,6 +88,15 @@ export function runDoctor(options = {}) {
       warnings.push({ code: 'CLAUDE_SETTINGS_UNREADABLE', detail: `${f.path}: ${f.error}`, fix: 'Fix the JSON so its permission rules apply.' });
     }
     if (options.repo) {
+      const statusHook = inspectClaudeStatusHook({ repoRoot: options.repo });
+      hosts.claude.status_hook = statusHook;
+      if (statusHook.status !== 'REGISTERED') {
+        warnings.push({
+          code: statusHook.status === 'STALE' ? 'CLAUDE_STATUS_HOOK_STALE' : 'CLAUDE_STATUS_HOOK_MISSING',
+          detail: `${statusHook.settings_path} does not register the session status hook of this checkout; later turns of a session are not reminded of the open run and its scope`,
+          fix: 'node scripts/init-host.mjs --host claude --repo <repo>',
+        });
+      }
       const scopeHook = inspectClaudeScopeHook({ repoRoot: options.repo });
       hosts.claude.scope_hook = scopeHook;
       if (scopeHook.status !== 'REGISTERED') {

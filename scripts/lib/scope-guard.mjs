@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getContractPath, matchesAnyGlob, toPosixPath } from './paths.mjs';
+import { CRAFTHELM_ROOT, getContractPath, matchesAnyGlob, toPosixPath } from './paths.mjs';
 import { STATES } from './state-machine.mjs';
 
 /**
@@ -94,14 +94,16 @@ function readJsonSafe(filePath) {
 }
 
 /**
- * Nearest ancestor of `startDir` that holds a `.crafthelm` directory.
+ * Nearest ancestor of `startDir` that CraftHelm has set up: a `.crafthelm` directory holding a config,
+ * contracts or runs. A bare `.crafthelm` (a home directory that only keeps an approver key) is not one.
  * @param {string} startDir
  * @returns {string|null}
  */
 export function findCraftHelmRepo(startDir) {
   let dir = path.resolve(startDir);
   for (;;) {
-    if (fs.existsSync(path.join(dir, '.crafthelm'))) return dir;
+    const base = path.join(dir, '.crafthelm');
+    if (['config.json', 'contracts', 'runs'].some((name) => fs.existsSync(path.join(base, name)))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -111,7 +113,7 @@ export function findCraftHelmRepo(startDir) {
 /**
  * Runs that have not ended, with the scope of their contract.
  * @param {string} repoRoot
- * @returns {Array<{ run_id: string, task_id: string, allow: string[], protect: string[] }>}
+ * @returns {Array<{ run_id: string, task_id: string, state: string, allow: string[], protect: string[] }>}
  */
 export function listActiveScopes(repoRoot) {
   const runsDir = path.join(repoRoot, '.crafthelm', 'runs');
@@ -126,6 +128,7 @@ export function listActiveScopes(repoRoot) {
     scopes.push({
       run_id: entry.name,
       task_id: checkpoint.task_id,
+      state: checkpoint.state,
       allow: contract.scope.allow,
       protect: Array.isArray(contract.scope.protect) ? contract.scope.protect : [],
     });
@@ -194,6 +197,40 @@ export function evaluateWrite(params) {
     'OUT_OF_SCOPE',
     `${rel} is outside scope.allow (${allowed}) of the active run ${scopes.map((s) => s.run_id).join(', ')}. verify would fail with SCOPE_VIOLATION. Keep the change inside the scope, or stop and ask for the contract to be re-planned.`,
   );
+}
+
+const WAITING_ON_A_PERSON = {
+  [STATES.READY_FOR_HUMAN_REVIEW]: 'It is waiting for the human acceptance decision. Do not edit files, and never record the decision yourself.',
+  [STATES.BLOCKED_HUMAN_ATTENTION]: 'The repair limit is used up. Stop and report to the user; the next step is their decision.',
+  [STATES.BLOCKED]: 'It is blocked. Stop and report the reason to the user.',
+  [STATES.REPLAN_REQUIRED]: 'The contract or its sources changed. Stop and ask the user to re-plan.',
+};
+
+/**
+ * The lines a session should be reminded of: which run is open, what it may touch, what comes next.
+ * Reads checkpoints and contracts only. With no run in progress it speaks at session start and is
+ * silent on later prompts.
+ * @param {{ cwd: string, event?: string, crafthelmRoot?: string }} params
+ * @returns {string} empty when there is nothing to say
+ */
+export function describeSessionStatus(params) {
+  const repoRoot = findCraftHelmRepo(params.cwd);
+  if (!repoRoot) return '';
+  const cli = `node "${toPosixPath(path.join(path.resolve(params.crafthelmRoot ?? CRAFTHELM_ROOT), 'scripts', 'crafthelm.mjs'))}"`;
+  const repoFlag = `--repo "${toPosixPath(repoRoot)}"`;
+  const scopes = listActiveScopes(repoRoot);
+  if (scopes.length === 0) {
+    if (params.event !== 'SessionStart') return '';
+    return `CraftHelm: this repository uses CraftHelm and no run is in progress. Before changing code, start one with: ${cli} start "<task>" ${repoFlag}. The user approves the contract; you do not.`;
+  }
+  const lines = [];
+  for (const run of scopes) {
+    lines.push(`CraftHelm: run ${run.run_id} (task ${run.task_id}) is ${run.state}.`);
+    lines.push(`  Write only inside scope.allow: ${run.allow.join(', ') || '(nothing)'}.${run.protect.length > 0 ? ` Never inside scope.protect: ${run.protect.join(', ')}.` : ''}`);
+    lines.push(`  ${WAITING_ON_A_PERSON[run.state] ?? `After editing, verify with: ${cli} verify ${repoFlag} --run-id ${run.run_id} --selective`}`);
+    lines.push(`  What failed and what is next: ${cli} status ${repoFlag} --run-id ${run.run_id} --explain`);
+  }
+  return lines.join('\n');
 }
 
 /**

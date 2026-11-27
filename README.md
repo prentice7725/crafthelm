@@ -166,6 +166,10 @@ Claude Code에 설치하면 승인 보호 규칙도 해당 범위의 `settings.j
 
 프로젝트 범위로 설치하면(`init-host --host claude`, `install-skills --scope project`) 범위 가드 훅도 `<repo>/.claude/settings.json`의 `PreToolUse`에 등록합니다. 이 훅은 활성 실행이 없어도 실행 디렉터리 산출물(`evidence/review.json`, `inbox/**` 외 전체)과 통제 파일(`.crafthelm/contracts/**`, `.claude/settings.json`, `.claude/settings.local.json`, `.crafthelm/approvers.json`, `.crafthelm/config.json`, `.crafthelm/skills.lock.json`) 쓰기를 즉시 차단합니다. 활성 실행 중에는 `scope.allow` 밖이거나 `scope.protect` 안인 파일의 `Edit`·`Write`·`MultiEdit`·`NotebookEdit` 호출을 막고 사유를 에이전트에게 돌려줍니다. 이때 경로는 심볼릭 링크·대소문자·Windows 짧은 이름과 대체 데이터 스트림까지 파일시스템 기준으로 풀어 비교합니다. 셸 명령으로 쓰는 파일은 훅이 보지 못하므로 최종 판정은 여전히 `verify`가 합니다. 훅 등록을 건너뛰려면 `--skip-claude-hooks`를 붙이세요. 판정 표와 한계는 [보안 정책](docs/security-policy.md)에 있습니다. `doctor --host claude`는 권한 규칙이나 훅이 빠졌거나 설치된 스킬 사본이 현재 체크아웃과 다르면 경고와 복구 명령을 출력합니다.
 
+같은 설치에서 세션 상태 훅도 `SessionStart`와 `UserPromptSubmit`에 등록합니다. 스킬 지시문은 스킬을 부른 순간에만 읽히므로, 이 훅이 프롬프트마다 활성 실행의 ID·상태·`scope.allow`·다음 명령을 에이전트에게 다시 알려 줍니다. 활성 실행이 없으면 세션을 시작할 때 한 번만 안내합니다. `--skip-claude-hooks`를 붙이면 두 훅을 모두 등록하지 않습니다.
+
+명령의 인자가 기억나지 않으면 `node scripts/crafthelm.mjs help <command>`를 씁니다. 하위 명령은 기본 300초가 지나면 중단되고 종료 코드 124로 끝납니다. 큰 파일이 많은 저장소에서는 `CRAFTHELM_CLI_TIMEOUT_MS`로 제한을 늘리거나 `0`으로 끕니다.
+
 ## 문서 안내
 
 - [아키텍처](docs/architecture.md): 모듈 구성과 공통 계약 계층
