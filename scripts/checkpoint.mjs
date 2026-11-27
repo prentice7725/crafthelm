@@ -163,9 +163,6 @@ function initializeCheckpoint(options) {
 
   const runId = options.runId ?? `${contract.task_id}-RUN-001`;
   const runDir = getRunDir(repoRoot, runId);
-  fs.mkdirSync(path.join(runDir, 'evidence', 'tests'), { recursive: true });
-  fs.mkdirSync(path.join(runDir, 'reports'), { recursive: true });
-  fs.mkdirSync(path.join(runDir, 'approvals'), { recursive: true });
 
   // Persist contract copy inside .crafthelm/contracts/<task-id>.json if needed
   const canonicalContractPath = getContractPath(repoRoot, contract.task_id);
@@ -232,6 +229,11 @@ function initializeCheckpoint(options) {
   };
 
   assertValidSchema('checkpoint', checkpoint, `checkpoint ${runId}`);
+  // The run's folders appear together with its checkpoint, after the hashing above. A command
+  // stopped while hashing then leaves no folder that looks like a run but has no checkpoint.
+  fs.mkdirSync(path.join(runDir, 'evidence', 'tests'), { recursive: true });
+  fs.mkdirSync(path.join(runDir, 'reports'), { recursive: true });
+  fs.mkdirSync(path.join(runDir, 'approvals'), { recursive: true });
   writeAtomic(getCheckpointPath(repoRoot, runId), `${JSON.stringify(checkpoint, null, 2)}\n`);
   return checkpoint;
 }

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
-import { SKILL_MODULES, renderHostSkillMarkdown } from './install-skills.mjs';
+import { SKILL_MODULES, isManagedSkillDir, renderHostSkillMarkdown, writeManagedSkillPackage } from './install-skills.mjs';
 import { applyClaudeScopeHook, applyClaudeStatusHook } from './lib/claude-hooks.mjs';
 import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
@@ -45,7 +45,14 @@ function copyDirectoryProtected(srcDir, dstDir, force, written, skipped) {
   }
 }
 
-function writeHostSkillPackage(skillDir, hostProfile, force, written, skipped) {
+function writeHostSkillPackage(skillDir, hostProfile, target, force, written, skipped) {
+  // A copy CraftHelm wrote (or one that is not there yet) is written whole, with the manifest that
+  // lets install-skills and a later init-host keep it current. A copy without the manifest may be
+  // someone's own: its files are left alone unless --force is given.
+  if (force || !fs.existsSync(skillDir) || isManagedSkillDir(skillDir)) {
+    written.push(...writeManagedSkillPackage(skillDir, { hostProfile, target, scope: 'project', crafthelmRoot: CRAFTHELM_ROOT }).files);
+    return;
+  }
   writeProtectedFile(
     path.join(skillDir, 'SKILL.md'),
     renderHostSkillMarkdown(hostProfile, CRAFTHELM_ROOT),
@@ -128,6 +135,7 @@ export function initHost(options = {}) {
     writeHostSkillPackage(
       path.join(repoRoot, '.agents', 'skills', 'crafthelm'),
       agentsProfile,
+      'agents',
       force,
       written,
       skipped,
@@ -145,6 +153,7 @@ export function initHost(options = {}) {
     writeHostSkillPackage(
       path.join(repoRoot, '.gemini', 'skills', 'crafthelm'),
       'gemini',
+      'gemini-cli',
       force,
       written,
       skipped,
@@ -166,6 +175,7 @@ export function initHost(options = {}) {
   if (isAll || normHost === 'claude') {
     writeHostSkillPackage(
       path.join(repoRoot, '.claude', 'skills', 'crafthelm'),
+      'claude',
       'claude',
       force,
       written,
@@ -193,6 +203,7 @@ export function initHost(options = {}) {
   if (isAll || normHost === 'codex') {
     writeHostSkillPackage(
       path.join(repoRoot, '.codex', 'skills', 'crafthelm'),
+      'codex',
       'codex',
       force,
       written,
