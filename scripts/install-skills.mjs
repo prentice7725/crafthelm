@@ -285,6 +285,59 @@ function readInstallManifest(skillDir) {
   }
 }
 
+// Repository-relative homes of a project-scope CraftHelm skill install (see resolveSkillTargets).
+const PROJECT_SKILL_DIRS = Object.freeze([
+  '.claude/skills/crafthelm',
+  '.codex/skills/crafthelm',
+  '.gemini/skills/crafthelm',
+  '.agents/skills/crafthelm',
+]);
+
+function listFilesRelative(dir, prefix = '') {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...listFilesRelative(path.join(dir, entry.name), rel));
+    else out.push(rel);
+  }
+  return out;
+}
+
+/**
+ * Repository-relative paths of project-scope CraftHelm skill installs that are byte-for-byte what
+ * the running CraftHelm package writes. Such a directory holds no edit of anyone's: it is the
+ * package, so verify need not count a reinstall during a run as an out-of-scope change. A directory
+ * with any extra, missing or differing file contributes nothing.
+ * @param {string} repoRoot
+ * @param {string} [crafthelmRoot]
+ * @returns {Set<string>}
+ */
+export function currentManagedSkillFiles(repoRoot, crafthelmRoot = CRAFTHELM_ROOT) {
+  const files = new Set();
+  for (const relDir of PROJECT_SKILL_DIRS) {
+    const skillDir = path.join(repoRoot, relDir);
+    const manifest = readInstallManifest(skillDir);
+    if (!manifest || manifest.managed_by !== 'crafthelm' || !Object.hasOwn(HOST_PROFILE_META, manifest.host_profile)) continue;
+    let expected;
+    try {
+      expected = buildExpectedFilesMap(manifest.host_profile, crafthelmRoot);
+    } catch {
+      continue;
+    }
+    if (manifest.skill_sha256 !== computeSkillPayloadDigest(expected)) continue;
+    const names = [...Object.keys(expected), INSTALL_MANIFEST_NAME];
+    const onDisk = listFilesRelative(skillDir);
+    if (onDisk.length !== names.length || !onDisk.every((rel) => names.includes(rel))) continue;
+    const same = Object.entries(expected).every(([rel, content]) => {
+      const abs = path.join(skillDir, rel);
+      return fs.statSync(abs).isFile() && fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n') === content;
+    });
+    if (!same) continue;
+    for (const rel of names) files.add(`${relDir}/${rel}`);
+  }
+  return files;
+}
+
 function copyKouetsuSiblingIfMissing(skillDir, kouetsuBundle, crafthelmRoot, force) {
   const siblingDir = path.join(path.dirname(skillDir), 'kouetsu');
   const siblingSkill = path.join(siblingDir, 'SKILL.md');

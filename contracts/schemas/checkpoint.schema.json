@@ -197,6 +197,29 @@
         }
       }
     },
+    "rebaseline_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reason", "changed_files", "recorded_at"],
+        "properties": {
+          "reason": { "type": "string", "minLength": 1 },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "previous_sha256", "current_sha256"],
+              "properties": {
+                "path": { "type": "string" },
+                "previous_sha256": { "type": ["string", "null"] },
+                "current_sha256": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
     "last_decision_file": {
       "type": "string"
     },

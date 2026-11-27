@@ -5,7 +5,7 @@ import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
 import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest, getChangedFiles, getGitHead, isGitRepo, runGit } from './lib/git.mjs';
 import { buildHandoffPacket } from './lib/handoff.mjs';
-import { evaluateDecisionIdentity, loadApproversPolicy } from './lib/human-gate.mjs';
+import { assertHumanInteractive, evaluateDecisionIdentity, loadApproversPolicy } from './lib/human-gate.mjs';
 import { INTERVIEW_DOCS, withArtifactLock, writeAtomic } from './lib/task-artifacts.mjs';
 import { STANDARD_STAGES } from './lib/methodology.mjs';
 import {
@@ -730,6 +730,56 @@ export function replanRun(options) {
   return { ok: true, state: checkpoint.state, contract_sha256: contractSha256, invalidated_stages: invalidatedStages };
 }
 
+// Files the CraftHelm and host tooling own, as opposed to the run's own task documents and
+// contract. A person may move their baseline forward after updating the tooling mid-run.
+const TOOLING_BASELINE_FILES = ['.crafthelm/config.json', '.crafthelm/skills.lock.json', 'GEMINI.md', '.claude/settings.json'];
+const TOOLING_BASELINE_DIRS = ['.agents/skills/', '.claude/skills/', '.codex/skills/', '.gemini/skills/'];
+const isToolingBaselineFile = (rel) => TOOLING_BASELINE_FILES.includes(rel) || TOOLING_BASELINE_DIRS.some((dir) => rel.startsWith(dir));
+
+/**
+ * Re-freeze the baseline hashes of tooling files (skill installs, skills lock, CraftHelm config,
+ * host settings) after a person updated them during a run. The run's own documents, contract,
+ * state and stages are untouched; the change is logged in the checkpoint and in
+ * approvals/rebaseline-history.jsonl. Refused inside an AI agent session.
+ * @param {{ repo?: string, runId: string, reason?: string, writer?: string, docsDir?: string, humanGate?: object }} options
+ */
+export function rebaselineToolingFiles(options) {
+  assertHumanInteractive({ action: 'checkpoint rebaseline', ...(options.humanGate ?? {}) });
+  const repoRoot = path.resolve(options.repo ?? '.');
+  const runId = options.runId;
+  const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
+  if (!reason) throw new Error('checkpoint rebaseline needs --reason "<what was updated and why>".');
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'rebaseline');
+  const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
+  if ([STATES.ACCEPTED, STATES.REJECTED, STATES.CLOSED_UNACCEPTED, STATES.ABORTED].includes(checkpoint.state)) {
+    throw new Error(`RUN_ENDED: ${runId} is ${checkpoint.state}; its baseline is final.`);
+  }
+
+  const previous = checkpoint.baseline_crafthelm_files ?? {};
+  const current = computeBaselineCraftHelmFiles(repoRoot, options.docsDir ?? 'docs', checkpoint.task_id);
+  const next = Object.fromEntries(Object.entries(previous).filter(([rel]) => !isToolingBaselineFile(rel)));
+  for (const [rel, hash] of Object.entries(current)) {
+    if (isToolingBaselineFile(rel)) next[rel] = hash;
+  }
+  const paths = [...new Set([...Object.keys(previous), ...Object.keys(next)])].filter(isToolingBaselineFile).sort();
+  const changedFiles = paths
+    .filter((rel) => previous[rel] !== next[rel])
+    .map((rel) => ({ path: rel, previous_sha256: previous[rel] ?? null, current_sha256: next[rel] ?? null }));
+  if (changedFiles.length === 0) {
+    return { ok: true, run_id: runId, state: checkpoint.state, changed_files: [] };
+  }
+
+  const historyEntry = { reason, changed_files: changedFiles, recorded_at: new Date().toISOString() };
+  checkpoint.baseline_crafthelm_files = next;
+  checkpoint.rebaseline_history = [...(checkpoint.rebaseline_history ?? []), historyEntry];
+  // Checkpoint first, then the append-only log, as in replanRun.
+  saveCheckpoint(repoRoot, runId, checkpoint);
+  const logPath = path.join(getRunDir(repoRoot, runId), 'approvals', 'rebaseline-history.jsonl');
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.appendFileSync(logPath, `${JSON.stringify(historyEntry)}\n`, 'utf8');
+  return { ok: true, run_id: runId, state: checkpoint.state, changed_files: changedFiles };
+}
+
 /**
  * Inspect checkpoint status and detect stale snapshots.
  */
@@ -758,10 +808,14 @@ function printUsage() {
     [
       'CraftHelm Checkpoint CLI (Run Lifecycle State, Single-Writer Lock, Handoff & Replan)',
       '',
-      'Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|status|audit> --repo <path> --run-id <id> [options]',
+      'Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|status|audit> --repo <path> --run-id <id> [options]',
       '',
       '  init --repo <path> --contract <contractPath> [--run-id <id>] [--baseline-ref <commit>]',
       '       --baseline-ref  Start the run at an earlier commit, so work already committed is verified too.',
+      '  rebaseline --repo <path> --run-id <id> --reason "<text>" [--writer <id>]',
+      '       Re-freeze the baseline of tooling files (skill installs, .crafthelm/skills.lock.json,',
+      '       .crafthelm/config.json, .claude/settings.json, GEMINI.md) after you updated them mid-run,',
+      '       so verify stops counting that update as SCOPE_VIOLATION. Run it yourself, outside an AI session.',
       '',
     ].join('\n'),
   );
@@ -794,8 +848,9 @@ if (isMainModule(import.meta.url)) {
     else if (sub === 'resume') out = resumeRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, docsDir: args['docs-dir'], writer: args.writer });
     else if (sub === 'handoff') out = createHandoff({ repo: args.repo, runId: args['run-id'], docsDir: args['docs-dir'] });
     else if (sub === 'replan') out = replanRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, reason: args.reason, writer: args.writer });
+    else if (sub === 'rebaseline') out = rebaselineToolingFiles({ repo: args.repo, runId: args['run-id'], reason: args.reason, writer: args.writer, docsDir: args['docs-dir'] });
     else if (sub === 'status' || sub === 'audit') out = statusCheckpoint({ repo: args.repo, runId: args['run-id'] });
-    else throw new Error('Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|status|audit> ...');
+    else throw new Error('Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|status|audit> ...');
 
     process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     if (out && out.ok === false) process.exit(1);

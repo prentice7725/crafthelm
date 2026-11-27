@@ -1,6 +1,7 @@
 import { requirementsWithoutAcceptance } from './lib/paths.mjs';
 import fs from 'node:fs';
 import { peerArtifactHashes } from './lib/task-artifacts.mjs';
+import { currentManagedSkillFiles } from './install-skills.mjs';
 import path from 'node:path';
 import { summarizeDelegations } from './delegate.mjs';
 import { assessEvidenceStrength } from './lib/evidence-strength.mjs';
@@ -492,7 +493,10 @@ export function runVerify(options) {
   const rawChangedFiles = isGitRepo(repoRoot) ? getChangedFiles(repoRoot, checkpoint.baseline_git_head) : [];
   const baselineCraftHelm = checkpoint.baseline_crafthelm_files ?? {};
   const peerHashes = peerArtifactHashes(repoRoot, checkpoint.task_id);
+  // A CraftHelm skill reinstalled during the run is the package itself, not an edit to it.
+  const managedSkillFiles = currentManagedSkillFiles(repoRoot);
   const changedFiles = rawChangedFiles.filter((rel) => {
+    if (managedSkillFiles.has(rel) && !matchesAnyGlob(rel, contract.scope.protect)) return false;
     // A sibling task must never exempt changes to this run's own or protected files.
     const baseline = Object.hasOwn(baselineCraftHelm, rel)
       ? baselineCraftHelm[rel]
