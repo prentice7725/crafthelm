@@ -5,7 +5,7 @@ import { CRAFTHELM_ROOT } from './lib/paths.mjs';
 
 // `approve` waits on a person reading review packages at a prompt; cutting it off mid-answer would
 // record nothing and look like a hang.
-export const LONG_RUNNING_COMMANDS = new Set(['verify', 'feedback', 'benchmark', 'approve']);
+export const LONG_RUNNING_COMMANDS = new Set(['verify', 'feedback', 'benchmark', 'approve', 'review']);
 // A guard against a hung subcommand, not a performance budget: hashing a repository with large
 // files can take minutes. CRAFTHELM_CLI_TIMEOUT_MS overrides it; 0 turns it off.
 export const DEFAULT_CLI_TIMEOUT_MS = 300_000;
@@ -57,6 +57,7 @@ const SUBCOMMANDS = new Map([
   ['feedback', 'scripts/feedback-loop.mjs'],
   ['review-package', 'scripts/review-package.mjs'],
   ['approve', 'scripts/approval.mjs'],
+  ['review', 'scripts/review.mjs'],
   ['memory', 'scripts/memory.mjs'],
   ['skills', 'scripts/skills.mjs'],
   ['benchmark', 'scripts/benchmark.mjs'],
@@ -87,6 +88,7 @@ function printHelp() {
       '  feedback         Run bounded verify -> feedback -> repair -> READY_FOR_HUMAN_REVIEW loop',
       '  review-package   Generate 8-section Markdown package, validate links/ACs, run Kouetsu editorial check',
       '  approve          record | batch | queue | verify explicit human acceptance decisions',
+      '  review           Open the review page: read and decide the runs waiting for a human decision',
       '  memory           index | search | decide | list Markdown SOT + SQLite FTS5 memory',
       '  skills           list | audit | lock | verify-lock external skills',
       '  benchmark        Run deterministic E01-E04, E10 comparison suite',

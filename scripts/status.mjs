@@ -49,6 +49,7 @@ export function recommendNextActionForRun(runSummary, repoArg = '.') {
     return {
       next_action: '기술 검증과 검토 보고서가 준비되었습니다. 사람의 최종 인수 결정을 기록하세요.',
       next_command: `${cliInvocation()} approve record --repo ${repoFlag} --run-id ${runId} --decision ACCEPTED --actor <name> --rationale "검토 완료"`,
+      review_command: `${cliInvocation()} review --repo ${repoFlag}`,
     };
   }
 

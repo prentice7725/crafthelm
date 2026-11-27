@@ -272,6 +272,13 @@ export function describeSessionStatus(params) {
     } else if (lock) {
       out.push(`  A writer lock without a readable owner is on this run; commands will stop with CONCURRENT_WRITER_BLOCKED until a person clears it.`);
     }
+    if (run.state === STATES.CHANGES_REQUESTED) {
+      const decision = readJsonSafe(path.join(repoRoot, '.crafthelm', 'runs', run.run_id, 'approvals', 'decision.json'));
+      if (decision?.decision === 'changes_requested' && typeof decision.rationale === 'string') {
+        const said = decision.rationale.length > 800 ? `${decision.rationale.slice(0, 800)}...` : decision.rationale;
+        out.push(`  The reviewer (${decision.actor}) asked for changes: ${JSON.stringify(said)}. Make them inside the scope, then verify again.`);
+      }
+    }
     out.push(`  What failed and what is next: ${cli} status ${repoFlag} --run-id ${run.run_id} --explain`);
     return out;
   };
@@ -290,7 +297,7 @@ export function describeSessionStatus(params) {
       `  Details of one: ${cli} status ${repoFlag} --run-id <run> --explain`,
     );
     if (waiting.filter((run) => run.state === STATES.READY_FOR_HUMAN_REVIEW).length > 1) {
-      lines.push(`  The user can decide them in one sitting, in a terminal outside this session: ${cli} approve batch ${repoFlag} --actor <name>. It also closes runs that later work replaced.`);
+      lines.push(`  The user can read and decide them on one page, from a terminal outside this session: ${cli} review ${repoFlag}. It also closes runs that later work replaced.`);
     }
   }
   return lines.join('\n');

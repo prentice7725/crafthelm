@@ -196,7 +196,7 @@ describe('Session status: short on every turn, and consistent', () => {
       const lines = text.split('\n');
       assert.equal(lines.length, 8);
       // Several runs wait for acceptance: the reminder names the one command that decides them together.
-      assert.match(lines[7], /^  The user can decide them in one sitting, in a terminal outside this session: node ".*crafthelm.mjs" approve batch --repo ".*" --actor <name>. It also closes runs that later work replaced.$/);
+      assert.match(lines[7], /^  The user can read and decide them on one page, from a terminal outside this session: node ".*crafthelm\.mjs" review --repo ".*"\. It also closes runs that later work replaced\.$/);
       assert.match(lines[0], /^CraftHelm: run M1B-RUN \(task M1B\) is READY\.$/);
       assert.match(lines[2], /verify --repo ".*" --run-id M1B-RUN --selective$/);
       assert.equal(lines[4], "CraftHelm: 4 other runs wait on a person's decision: M0A-RUN (READY_FOR_HUMAN_REVIEW), M0B-RUN (READY_FOR_HUMAN_REVIEW), M0C-RUN (READY_FOR_HUMAN_REVIEW), M1-RUN (BLOCKED_HUMAN_ATTENTION).");

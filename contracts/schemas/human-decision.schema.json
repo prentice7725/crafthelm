@@ -58,6 +58,7 @@
       "enum": [
         "local_explicit_input_not_identity_verified",
         "local_tty_confirmed_not_identity_verified",
+        "local_review_page_not_identity_verified",
         "signed_ed25519"
       ]
     },

@@ -198,7 +198,9 @@ export function recordHumanDecision(options) {
       ? VERIFICATION_TYPES.SIGNED
       : options.ttyConfirmed
         ? VERIFICATION_TYPES.TTY_CONFIRMED
-        : VERIFICATION_TYPES.EXPLICIT_INPUT,
+        : options.reviewPageConfirmed
+          ? VERIFICATION_TYPES.REVIEW_PAGE
+          : VERIFICATION_TYPES.EXPLICIT_INPUT,
   };
   if (options.signKeyPath) {
     record.signature = signDecisionRecord(record, path.resolve(options.signKeyPath));
