@@ -150,3 +150,11 @@ Diff hunk와 다언어(JS/TS, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby, P
 - `checkpoint close --repo <path> --run-id <id>[,<id>...] --reason "<사유>" [--superseded-by <run-id>]`는 실행을 수용 없이 끝낸다. 상태는 `ABORTED`가 되고 체크포인트의 `closure`에 사유, 닫기 전 상태, 닫은 경로(`agent_session`, `interactive_terminal`, `non_interactive`)가 남는다. 결정 기록은 만들지 않으며 증거는 그대로 둔다. 여러 실행을 줄 때는 모두 닫을 수 있어야 닫는다.
 - 닫기는 수용이 아니므로 에이전트 세션에서도 실행할 수 있다. Claude Code에서는 권한 규칙이 사용자에게 확인을 묻는다(ask). 이미 결정이 기록된 실행(`ACCEPTED`, `REJECTED` 등)은 닫을 수 없다.
 - `approve` 명령은 사람이 검토 보고서를 읽으며 답하는 동안 기다리므로 디스패처의 명령 시간 제한을 적용하지 않는다.
+
+### 22. 여러 실행이 함께 있을 때의 범위와 선택적 회귀 (`scripts/lib/scope-guard.mjs`, `scripts/verify.mjs`, `scripts/lib/impact-analysis.mjs`)
+
+- 범위 가드는 지금 작업 중인 실행의 범위만 적용한다. 사람 결정을 기다리는 실행(`READY_FOR_HUMAN_REVIEW`, `BLOCKED_HUMAN_ATTENTION`, `BLOCKED`, `REPLAN_REQUIRED`)의 `scope.protect`는 작업 중인 실행이 있을 때 쓰기를 막지 않는다. 작업 중인 실행이 여럿이면 작성 잠금을 가진 실행의 범위를 적용하고, 잠금이 없으면 전과 같이 합쳐 적용한다. 작업 중인 실행이 하나도 없으면 대기 중인 실행의 범위가 그대로 적용된다.
+- 대기 중인 실행이 보호하던 경로를 다른 실행이 고치면 그 실행의 스냅샷은 달라진다. 수용하려면 다시 검증해야 하고, 그때 보호 경로 변경이 `PROTECTED_PATH_VIOLATION`으로 보고된다. 가드가 막지 않을 뿐 `verify`의 판정은 바뀌지 않았다.
+- 선택적 회귀에서 검사를 건너뛴다는 것은 앞선 통과 결과를 그대로 쓴다는 뜻이다. 이 실행에서 같은 명령으로 통과한 기록(검증 이력이나 `--record-baseline-green`)이 없는 검사는 건너뛰지 않고 실행하며, 선택 사유는 `no_earlier_pass_in_this_run`이다. 그러지 않으면 한 번도 실행되지 않은 검사가 유일한 수용 기준인 요구가 `VERIFIED`로 보고된다.
+- 영향도 분석이 읽지 못하는 데이터 파일(`.json`, `.jsonc`, `.json5`, `.jsonl`, `.xml`, `.xsd`, `.avsc`)이 바뀌면 전체 실행으로 대체한다(`UNPARSED_SOURCE_CHANGED`). 스키마나 설정을 읽는 테스트와 그 파일을 정적으로 연결할 수 없기 때문이다.
+- `verify`의 변경 파일은 실행의 기준선부터 지금 트리까지다. 그사이 다른 계약으로 진행한 작업도 여기에 잡히며, 이 실행의 범위 밖이면 `SCOPE_VIOLATION`이다. 다른 실행의 범위는 어떤 경로도 면제하지 않는다. 대신 사유에 그 파일이 어느 실행의 범위 안인지를 적는다. 한 실행을 결정하기 전에 다음 실행을 시작하면 앞선 실행은 이 트리에서 다시 통과할 수 없다.

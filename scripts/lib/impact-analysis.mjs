@@ -26,6 +26,9 @@ const UNPARSED_SOURCE_EXTS = new Set([
   '.sql', '.proto', '.graphql', '.gql', '.zig', '.hs', '.ex', '.exs', '.erl',
   '.swift', '.dart', '.scala', '.clj', '.lua', '.r', '.m', '.mm',
   '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.yml', '.yaml', '.toml', '.ini',
+  // Data that code and tests read: a schema, a fixture, a config. Nothing links it to the tests
+  // that load it, so a change to one cannot be called unimpacted.
+  '.json', '.jsonc', '.json5', '.jsonl', '.xml', '.xsd', '.avsc',
 ]);
 
 /**
