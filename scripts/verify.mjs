@@ -1,3 +1,4 @@
+import { requirementsWithoutAcceptance } from './lib/paths.mjs';
 import fs from 'node:fs';
 import { peerArtifactHashes } from './lib/task-artifacts.mjs';
 import path from 'node:path';
@@ -455,6 +456,16 @@ export function runVerify(options) {
     process.stderr.write(`[verify] Mutation journal set aside (${recovered.problem}): ${recovered.detail}\n`);
     probeRecovery = { status: 'REJECTED', file: recovered.file ?? null, restored_sha256: null, problem: recovered.problem, detail: recovered.detail };
   }
+  // Where the time went, stage by stage: a long verify is mostly not the check commands in a
+  // repository with many files, and nothing else says so.
+  const stageTimes = [];
+  let stageStarted = Date.now();
+  const endStage = (name) => {
+    const ms = Date.now() - stageStarted;
+    stageStarted = Date.now();
+    stageTimes.push({ stage: name, ms });
+    if (options.progress) process.stderr.write(`[verify] ${name}: ${(ms / 1000).toFixed(1)}s\n`);
+  };
   const checkpointPath = getCheckpointPath(repoRoot, runId);
   const checkpoint = readJson(checkpointPath);
   const contractPath = options.contract ? path.resolve(options.contract) : getContractPath(repoRoot, checkpoint.task_id);
@@ -470,6 +481,7 @@ export function runVerify(options) {
   // Reused for the protected-file comparison below, before any check command runs.
   const fileHashes = new Map();
   const targetSnapshotDigest = computeSnapshotDigest(repoRoot, { fileHashes });
+  endStage('snapshot of the working tree');
   const finalTreeHash = isGitRepo(repoRoot) ? getGitTreeHash(repoRoot) : 'NO_GIT';
   const policy = loadProtectedPolicy(repoRoot, contract, checkpoint, options);
   if (policy.tamperDetected) {
@@ -513,6 +525,7 @@ export function runVerify(options) {
   fs.mkdirSync(path.join(runDir, 'evidence', 'rules'), { recursive: true });
   fs.writeFileSync(path.join(runDir, diffRel), diffText, 'utf8');
 
+  endStage('scope and diff');
   const impact = analyzeImpact(repoRoot, {
     baseRef: checkpoint.baseline_git_head,
     policyBaseRef: policy.baseRef,
@@ -544,6 +557,7 @@ export function runVerify(options) {
     failureReasons.push(`PROTECTED_PATH_VIOLATION: Protected files altered: ${[...protectedViolations].join(', ')}`);
   }
 
+  endStage('impact analysis');
   // Execute Acceptance Criteria
   const checks = [];
   const unverified = [];
@@ -682,6 +696,12 @@ export function runVerify(options) {
     });
   }
 
+  // A requirement no acceptance item refers to was not checked by anything above.
+  for (const req of requirementsWithoutAcceptance(contract)) {
+    unverified.push(`${req.id} has no acceptance check (${req.statement})`);
+  }
+  endStage('acceptance checks');
+
   // V01 / E15: Functional feature/bugfix requires executed & passing E2E smoke
   const isFunctional =
     (contract.change_kind === 'feature' || contract.change_kind === 'bugfix' || !contract.change_kind) &&
@@ -784,6 +804,7 @@ export function runVerify(options) {
     unverified.push('AI independent review not recorded');
   }
 
+  endStage('reliability rules and review');
   // Every failure that does not depend on the probe is settled above. The E2E outcome depends on it only
   // when a lite contract has no E2E check; otherwise a failing or missing E2E fails the run regardless.
   const e2eChecks = checks.filter((c) => c.kind === 'e2e' && c.status !== 'NOT_APPLICABLE');
@@ -822,6 +843,7 @@ export function runVerify(options) {
     writeJson(path.join(runDir, mutationProbeRel), mutationProbe);
   }
 
+  if (probeRequested) endStage('mutation probe');
   const evidenceStrength = assessEvidenceStrength({
     contract,
     checks,
@@ -1024,6 +1046,8 @@ export function runVerify(options) {
     delegation: summarizeDelegations(repoRoot, runId),
     process_profile: {
       profile: liteProfile.profile,
+      // The size limits decide the lite E2E exemption only; under the full profile they are shown, not applied.
+      limits_enforced: liteProfile.profile === 'lite',
       e2e_exempted: e2eExempted,
       violations: liteProfile.violations,
       limits: liteProfile.limits,
@@ -1094,9 +1118,11 @@ export function runVerify(options) {
   checkpoint.updated_at = new Date().toISOString();
   assertValidSchema('checkpoint', checkpoint, `checkpoint ${runId}`);
   writeJson(checkpointPath, checkpoint);
+  endStage('evidence records');
 
   return {
     ok: technicalStatus === 'VERIFIED' || technicalStatus === 'PARTIAL',
+    stage_times_ms: Object.fromEntries(stageTimes.map((s) => [s.stage, s.ms])),
     run_id: runId,
     technical_status: technicalStatus,
     verification_level: verificationLevel,

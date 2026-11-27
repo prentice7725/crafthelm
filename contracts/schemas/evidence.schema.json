@@ -146,6 +146,7 @@
       "required": ["profile", "e2e_exempted", "violations", "limits", "observed"],
       "properties": {
         "profile": { "type": "string", "enum": ["full", "lite"] },
+        "limits_enforced": { "type": "boolean" },
         "e2e_exempted": { "type": "boolean" },
         "violations": { "type": "array", "items": { "type": "string" } },
         "limits": {

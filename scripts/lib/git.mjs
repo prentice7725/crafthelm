@@ -172,6 +172,8 @@ export function readFileAtRef(cwd, ref, relPath) {
 /**
  * Compute an immutable snapshot digest of the target repo's current working state.
  * Binds `HEAD` + tracked/untracked/deleted files while excluding `.crafthelm/runs/`, `.git/`, and `node_modules/`.
+ * Files git ignores are not part of it; a path that must not change is listed in `scope.protect`,
+ * which is hashed on its own whether or not git ignores it.
  * @param {string} cwd
  * @param {{ fileHashes?: Map<string, string> }} [options] `fileHashes` (repo-relative path to
  *   SHA-256) is filled with every file hashed, and consulted first. A caller that needs the same
@@ -184,11 +186,17 @@ export function computeSnapshotDigest(cwd, options = {}) {
   const head = isGitRepo(repoRoot) ? getGitHead(repoRoot) : 'NO_GIT';
   const fileSet = new Set();
 
+  // In a git repository the snapshot is the tree git sees: tracked files and untracked files that
+  // are not ignored. That is the tree verify judges (scope and the diff are read through git), and
+  // an ignored directory of build output or a virtualenv can hold a hundred thousand files that
+  // every step would otherwise hash. `-z` keeps non-ASCII names unquoted.
+  let listedByGit = false;
   if (isGitRepo(repoRoot)) {
-    const trackedRes = runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard']);
+    const trackedRes = runGit(repoRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
     if (trackedRes.exitCode === 0) {
-      for (const line of trackedRes.stdout.split(/\r?\n/)) {
-        const clean = toPosixPath(line.trim());
+      listedByGit = true;
+      for (const name of trackedRes.stdout.split('\0')) {
+        const clean = toPosixPath(name);
         if (clean && !isExcludedFromSnapshot(clean)) {
           fileSet.add(clean);
         }
@@ -196,8 +204,8 @@ export function computeSnapshotDigest(cwd, options = {}) {
     }
   }
 
-  // Also walk filesystem in case untracked hidden/explicit files are missed or non-git directory
-  walkWorkspaceFiles(repoRoot, '', fileSet);
+  // Outside git (or when git cannot list the tree) every file under the directory is taken.
+  if (!listedByGit) walkWorkspaceFiles(repoRoot, '', fileSet);
 
   const sorted = [...fileSet].sort();
   const lines = [`HEAD:${head}\n`];

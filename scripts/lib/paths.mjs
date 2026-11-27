@@ -178,3 +178,14 @@ export function getMemoryIndexPath(repoRoot) {
 export function getHandoffPacketPath(repoRoot, runId) {
   return path.join(getRunDir(repoRoot, runId), 'evidence', 'handoff-packet.json');
 }
+
+/**
+ * Requirements of a contract that no applicable acceptance item refers to. A contract written
+ * before requirements were recorded in it has none to report.
+ * @param {{ requirements?: Array<{ id: string, statement: string }>, acceptance?: Array<{ requirement?: string, applicable?: boolean }> }} contract
+ * @returns {Array<{ id: string, statement: string }>}
+ */
+export function requirementsWithoutAcceptance(contract) {
+  const covered = new Set((contract?.acceptance ?? []).filter((ac) => ac && ac.applicable !== false).map((ac) => ac.requirement));
+  return (contract?.requirements ?? []).filter((r) => !covered.has(r.id));
+}
