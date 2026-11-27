@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
-import { getContractPath, unsupportedGlobSyntax } from './lib/paths.mjs';
+import { cliInvocation, getContractPath, unsupportedGlobSyntax } from './lib/paths.mjs';
 import { readTaskReceipt, withTaskWrite, writeAtomic, writeTaskReceipt } from './lib/task-artifacts.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
 import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } from './lib/lite-profile.mjs';
@@ -274,8 +274,8 @@ function amendCheck(file, kind, command, options) {
   const readiness = checkContractReadiness(contract);
   const needsApproval = readiness.policy_ready && !contract.approval.contract_approved;
   const nextCommand = needsApproval
-    ? `node scripts/crafthelm.mjs contract approve "${file}" --actor operator`
-    : `node scripts/crafthelm.mjs contract validate "${file}"`;
+    ? `${cliInvocation()} contract approve "${file}" --actor operator`
+    : `${cliInvocation()} contract validate "${file}"`;
   return {
     ok: true, contract_path: file, task_id: contract.task_id, ...readiness,
     next_command: nextCommand,
@@ -292,9 +292,10 @@ function printUsage() {
       '  contract.mjs plan     <contractPath>',
       '  contract.mjs add-e2e  <contractPath> --e2e-cmd "<command>" [--docs-dir <dir>]',
       '  contract.mjs add-test <contractPath> --test-cmd "<command>" [--docs-dir <dir>]   (test written for this change, kind "unit")',
-      '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--init-run [--repo <path>] [--run-id <id>]]',
+      '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--init-run [--repo <path>] [--run-id <id>] [--baseline-ref <commit>]]',
       '',
       '  --init-run   After approval, also freeze the run baseline (checkpoint init). Implies --strict.',
+      '  --baseline-ref  With --init-run: start the run at an earlier commit, so work already committed is verified too.',
       '',
     ].join('\n'),
   );
@@ -358,9 +359,9 @@ if (isMainModule(import.meta.url)) {
         const runId = typeof args['run-id'] === 'string' ? args['run-id'] : `${validateContractFile(target).contract.task_id}-RUN-001`;
         res = withNewRun(repo, runId, initialize => {
           const result = approve();
-          const cp = initialize({ contract: result.contract_path });
+          const cp = initialize({ contract: result.contract_path, baselineRef: typeof args['baseline-ref'] === 'string' ? args['baseline-ref'] : undefined });
           result.run = { run_id: cp.run_id, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
-          result.next_command = `node scripts/crafthelm.mjs feedback --repo "${repo}" --run-id ${cp.run_id} --selective`;
+          result.next_command = `${cliInvocation()} feedback --repo "${repo}" --run-id ${cp.run_id} --selective`;
           return result;
         });
       } else {

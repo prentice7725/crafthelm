@@ -447,7 +447,9 @@ export function runVerify(options) {
     failureReasons.push('CONTRACT_HASH_MISMATCH: execution contract modified without replan');
   }
 
-  const targetSnapshotDigest = computeSnapshotDigest(repoRoot);
+  // Reused for the protected-file comparison below, before any check command runs.
+  const fileHashes = new Map();
+  const targetSnapshotDigest = computeSnapshotDigest(repoRoot, { fileHashes });
   const finalTreeHash = isGitRepo(repoRoot) ? getGitTreeHash(repoRoot) : 'NO_GIT';
   const policy = loadProtectedPolicy(repoRoot, contract, checkpoint, options);
   if (policy.tamperDetected) {
@@ -473,7 +475,7 @@ export function runVerify(options) {
 
   for (const [protRel, oldHash] of Object.entries(checkpoint.protected_file_hashes ?? {})) {
     const abs = path.join(repoRoot, protRel);
-    const curHash = fs.existsSync(abs) ? sha256File(abs) : 'DELETED';
+    const curHash = fs.existsSync(abs) ? (fileHashes.get(toPosixPath(protRel)) ?? sha256File(abs)) : 'DELETED';
     if (curHash !== oldHash) {
       protectedViolations.add(protRel);
     }

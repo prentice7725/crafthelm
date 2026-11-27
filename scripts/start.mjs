@@ -7,7 +7,7 @@ import { allocateNextTaskId, runInterview } from './interview.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { DEFAULT_IGNORED_DIRS } from './lib/impact-languages.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
-import { toPosixPath } from './lib/paths.mjs';
+import { cliInvocation, toPosixPath } from './lib/paths.mjs';
 import { detectRepoTestRunners } from './lib/test-runners.mjs';
 
 const PREFERRED_HOST_ORDER = ['codex', 'claude', 'antigravity', 'generic'];
@@ -164,7 +164,7 @@ export function startTask(options = {}) {
       detected,
       message: '작업 설명을 입력해 주세요. 예: crafthelm start "로그인 토큰 만료 버그 수정"',
       next_action: '아래 명령에 작업 설명을 넣어 인터뷰와 계약 생성을 시작하세요.',
-      next_command: `node scripts/crafthelm.mjs start "<작업 설명>" --repo ${quoteArg(repoArg)}`,
+      next_command: `${cliInvocation()} start "<작업 설명>" --repo ${quoteArg(repoArg)}`,
     };
   }
 
@@ -223,7 +223,7 @@ export function startTask(options = {}) {
       ok: false, status: 'RUN_EXISTS', repo: repoRoot, detected,
       run: { run_id: runId, initialized: false, reason: 'RUN_EXISTS' },
       next_action: '기존 실행을 이어가세요.',
-      next_command: `node scripts/crafthelm.mjs checkpoint resume --repo ${quoteArg(repoArg)} --run-id ${quoteArg(runId)}`,
+      next_command: `${cliInvocation()} checkpoint resume --repo ${quoteArg(repoArg)} --run-id ${quoteArg(runId)}`,
     };
   }
 }
@@ -245,8 +245,8 @@ function finishStart({ options, repoArg, repoRoot, requestText, detected, cmdHin
           : '누락된 필수 항목(BLOCKER)을 보완해 다시 실행하세요.',
       next_command:
         iv.status === 'TASK_EXISTS'
-          ? `node scripts/crafthelm.mjs start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite`
-          : `node scripts/crafthelm.mjs start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)}`,
+          ? `${cliInvocation()} start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite`
+          : `${cliInvocation()} start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)}`,
     };
   }
 
@@ -271,25 +271,25 @@ function finishStart({ options, repoArg, repoRoot, requestText, detected, cmdHin
   let nextCommand;
   if (run?.initialized) {
     nextAction = '계약 승인과 실행 기준선 동결까지 끝났습니다. 허용 범위(scope.allow) 안에서 코드를 수정한 뒤 아래 명령으로 검증과 검토 보고서 발행을 한 번에 실행하세요.';
-    nextCommand = `node scripts/crafthelm.mjs feedback --repo ${quoteArg(repoArg)} --run-id ${runId} --selective`;
+    nextCommand = `${cliInvocation()} feedback --repo ${quoteArg(repoArg)} --run-id ${runId} --selective`;
   } else if (iv.warnings?.some((w) => w.code === 'LITE_PROFILE_NOT_ELIGIBLE')) {
     nextAction = '경량 프로필(lite)은 버그 수정(bugfix)에만 쓸 수 있습니다. 프로필을 빼고 다시 실행하세요.';
-    nextCommand = `node scripts/crafthelm.mjs start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite`;
+    nextCommand = `${cliInvocation()} start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite`;
   } else if (iv.warnings?.some((w) => w.code === 'LITE_TARGETED_TEST_MISSING')) {
     nextAction = '경량 프로필(lite)은 E2E 대신 이번 변경을 직접 검사하는 테스트에 기대므로, 범용 테스트 명령 하나로는 면제를 받을 수 없습니다. 변경한 코드를 호출하는 테스트의 실행 명령을 계약에 추가하세요.';
-    nextCommand = `node scripts/crafthelm.mjs contract add-test ${quoteArg(contractDisplayPath)} --test-cmd ${quoteArg('<전용 테스트 명령>')}`;
+    nextCommand = `${cliInvocation()} contract add-test ${quoteArg(contractDisplayPath)} --test-cmd ${quoteArg('<전용 테스트 명령>')}`;
   } else if (!iv.policy_ready) {
     const hintE2e = cmdHints.suggested_e2e_command ?? '<E2E 또는 스모크 실행 명령>';
     nextAction = '기능 변경 계약에 E2E/스모크 확인 명령이 빠졌습니다. 아래 명령에 실제 동작 확인 명령을 지정해 계약을 보완하세요.';
-    nextCommand = `node scripts/crafthelm.mjs contract add-e2e ${quoteArg(contractDisplayPath)} --e2e-cmd ${quoteArg(hintE2e)}`;
+    nextCommand = `${cliInvocation()} contract add-e2e ${quoteArg(contractDisplayPath)} --e2e-cmd ${quoteArg(hintE2e)}`;
   } else if (iv.status === 'CONTRACT_PENDING') {
     nextAction = options.initRun
       ? '계약 스키마와 E2E 검증 기준이 준비되었습니다. 아래 명령으로 계약 승인과 실행 기준선 동결을 한 번에 수행하세요.'
       : '계약 스키마와 E2E 검증 기준이 준비되었습니다. 아래 명령으로 계약을 승인하세요.';
-    nextCommand = `node scripts/crafthelm.mjs contract approve ${quoteArg(contractDisplayPath)} --actor operator${options.initRun ? ` --init-run --repo ${quoteArg(repoArg)}` : ''}`;
+    nextCommand = `${cliInvocation()} contract approve ${quoteArg(contractDisplayPath)} --actor operator${options.initRun ? ` --init-run --repo ${quoteArg(repoArg)}` : ''}`;
   } else {
     nextAction = '계약이 승인되었습니다. 아래 명령으로 실행 체크포인트를 초기화하세요.';
-    nextCommand = `node scripts/crafthelm.mjs checkpoint init --repo ${quoteArg(repoArg)} --contract ${quoteArg(contractDisplayPath)} --run-id ${iv.task_id}-RUN-001`;
+    nextCommand = `${cliInvocation()} checkpoint init --repo ${quoteArg(repoArg)} --contract ${quoteArg(contractDisplayPath)} --run-id ${iv.task_id}-RUN-001`;
   }
 
   return {

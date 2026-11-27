@@ -173,9 +173,13 @@ export function readFileAtRef(cwd, ref, relPath) {
  * Compute an immutable snapshot digest of the target repo's current working state.
  * Binds `HEAD` + tracked/untracked/deleted files while excluding `.crafthelm/runs/`, `.git/`, and `node_modules/`.
  * @param {string} cwd
+ * @param {{ fileHashes?: Map<string, string> }} [options] `fileHashes` (repo-relative path to
+ *   SHA-256) is filled with every file hashed, and consulted first. A caller that needs the same
+ *   hashes right away, with nothing run in between, passes one map to both instead of reading large
+ *   files twice. It must not outlive that moment: nothing checks that a file is unchanged.
  * @returns {string}
  */
-export function computeSnapshotDigest(cwd) {
+export function computeSnapshotDigest(cwd, options = {}) {
   const repoRoot = path.resolve(cwd);
   const head = isGitRepo(repoRoot) ? getGitHead(repoRoot) : 'NO_GIT';
   const fileSet = new Set();
@@ -197,10 +201,22 @@ export function computeSnapshotDigest(cwd) {
 
   const sorted = [...fileSet].sort();
   const lines = [`HEAD:${head}\n`];
+  const memo = options.fileHashes;
+  // A tree with large files takes a while; say so instead of looking hung.
+  const started = Date.now();
+  let nextNotice = started + 5000;
+  let done = 0;
   for (const rel of sorted) {
+    done += 1;
+    if (Date.now() >= nextNotice) {
+      process.stderr.write(`[crafthelm] hashing the working tree: ${done}/${sorted.length} files, ${Math.round((Date.now() - started) / 1000)}s\n`);
+      nextNotice = Date.now() + 10000;
+    }
     const abs = path.join(repoRoot, rel);
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
-      lines.push(`${rel}:${sha256File(abs)}\n`);
+      const hash = memo?.get(rel) ?? sha256File(abs);
+      memo?.set(rel, hash);
+      lines.push(`${rel}:${hash}\n`);
     } else {
       lines.push(`${rel}:DELETED\n`);
     }

@@ -113,6 +113,7 @@ export function initHost(options = {}) {
       ...(options.testCommandTemplate ? { test_command_template: options.testCommandTemplate } : {}),
       ...(options.customAnalyzer ? { custom_impact_analyzer: options.customAnalyzer } : {}),
     },
+    ...(options.requireRun ? { require_run_for_edits: true } : {}),
     model_routing: {
       enabled: true,
       escalate_on_retry: 2,
@@ -225,7 +226,7 @@ function printUsage() {
     [
       'CraftHelm Host Initializer CLI',
       '',
-      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--skip-claude-permissions] [--skip-claude-hooks] [--force]',
+      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--skip-claude-permissions] [--skip-claude-hooks] [--require-run] [--force]',
       '',
       'With --host claude|all, approval guard rules are merged into <repo>/.claude/settings.json (added, never removed).',
       '',
@@ -254,6 +255,7 @@ if (isMainModule(import.meta.url)) {
       force: Boolean(args.force),
       skipClaudePermissions: Boolean(args['skip-claude-permissions']),
       skipClaudeHooks: Boolean(args['skip-claude-hooks']),
+      requireRun: Boolean(args['require-run']),
     });
     process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
   } catch (err) {

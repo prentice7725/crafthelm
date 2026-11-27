@@ -178,7 +178,18 @@ export function evaluateWrite(params) {
   }
 
   const scopes = listActiveScopes(repoRoot);
-  if (scopes.length === 0) return allow('NO_ACTIVE_RUN', 'no run in progress');
+  if (scopes.length === 0) {
+    // Opt-in per repository: with `require_run_for_edits` in .crafthelm/config.json, a change needs
+    // an open run. Off by default, because it also stops a one-line fix nobody wanted a contract for.
+    if (readJsonSafe(path.join(repoRoot, '.crafthelm', 'config.json'))?.require_run_for_edits !== true) {
+      return allow('NO_ACTIVE_RUN', 'no run in progress');
+    }
+    if ((params.isIgnored ?? isGitIgnored)(repoRoot, rel)) return allow('GIT_IGNORED', 'ignored by git, not part of the verified tree');
+    return deny(
+      'RUN_REQUIRED',
+      `${rel}: this repository requires an open CraftHelm run before files are changed (require_run_for_edits). Start one with: node "${toPosixPath(path.join(CRAFTHELM_ROOT, 'scripts', 'crafthelm.mjs'))}" start "<task>" --repo "${toPosixPath(repoRoot)}". The user approves the contract.`,
+    );
+  }
 
   const protectedBy = scopes.filter((s) => matches(key, s.protect));
   if (protectedBy.length > 0) {
@@ -221,7 +232,8 @@ export function describeSessionStatus(params) {
   const scopes = listActiveScopes(repoRoot);
   if (scopes.length === 0) {
     if (params.event !== 'SessionStart') return '';
-    return `CraftHelm: this repository uses CraftHelm and no run is in progress. Before changing code, start one with: ${cli} start "<task>" ${repoFlag}. The user approves the contract; you do not.`;
+    const required = readJsonSafe(path.join(repoRoot, '.crafthelm', 'config.json'))?.require_run_for_edits === true;
+    return `CraftHelm: this repository uses CraftHelm and no run is in progress.${required ? ' File edits are blocked until one is open.' : ''} Before changing code, start one with: ${cli} start "<task>" ${repoFlag}. The user approves the contract; you do not.`;
   }
   const lines = [];
   for (const run of scopes) {

@@ -168,7 +168,7 @@ Claude Code에 설치하면 승인 보호 규칙도 해당 범위의 `settings.j
 
 같은 설치에서 세션 상태 훅도 `SessionStart`와 `UserPromptSubmit`에 등록합니다. 스킬 지시문은 스킬을 부른 순간에만 읽히므로, 이 훅이 프롬프트마다 활성 실행의 ID·상태·`scope.allow`·다음 명령을 에이전트에게 다시 알려 줍니다. 활성 실행이 없으면 세션을 시작할 때 한 번만 안내합니다. `--skip-claude-hooks`를 붙이면 두 훅을 모두 등록하지 않습니다.
 
-명령의 인자가 기억나지 않으면 `node scripts/crafthelm.mjs help <command>`를 씁니다. 하위 명령은 기본 300초가 지나면 중단되고 종료 코드 124로 끝납니다. 큰 파일이 많은 저장소에서는 `CRAFTHELM_CLI_TIMEOUT_MS`로 제한을 늘리거나 `0`으로 끕니다.
+명령의 인자가 기억나지 않으면 `node scripts/crafthelm.mjs help <command>`를 씁니다. 안내되는 다음 명령(`next_command`)은 대상 저장소에서 실행해도 되도록 CraftHelm 스크립트의 절대 경로로 출력합니다. 하위 명령은 기본 300초가 지나면 중단되고 종료 코드 124로 끝납니다. 작업 트리 해시가 5초를 넘기면 진행 상황을 stderr에 알립니다. 큰 파일이 많은 저장소에서는 `CRAFTHELM_CLI_TIMEOUT_MS`로 제한을 늘리거나 `0`으로 끕니다.
 
 ## 문서 안내
 
