@@ -140,3 +140,13 @@ Diff hunk와 다언어(JS/TS, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby, P
 - 여러 호스트가 함께 쓰는 `.agents/skills/crafthelm`은 처음 쓴 호스트 프로필을 매니페스트에 적어 두고, 이후 갱신과 상태 점검은 그 프로필을 기준으로 한다. 프로필을 바꾸려면 `--force`를 쓴다.
 - 실행 폴더(`approvals/`, `evidence/`, `reports/`)는 기준선 해시 계산이 끝난 뒤 `checkpoint.json`과 함께 만든다. 계산 도중 명령이 중단되어도 체크포인트 없는 실행 폴더가 남지 않는다.
 - `contract approve --init-run`이 승인을 기록한 뒤 실행을 열기 전에 중단되면 승인만 남는다. 같은 명령을 다시 실행하면 승인은 그대로 두고 실행만 연다. 이때 알림은 "아무것도 쓰지 않았다"가 아니라 실행을 열었다고 적는다.
+
+### 21. 대기 중인 실행을 한 번에 결정하기와 수용 없이 닫기 (`scripts/approval.mjs`, `scripts/checkpoint.mjs`)
+
+- `approve batch --repo <path> --actor <이름>`은 사람 결정을 기다리는 실행을 모두 나열하고, 실행마다 지금 상태로 수용할 수 있는지를 보여 준 뒤, 수용할 실행과 수용 없이 닫을 실행을 묻는다. 수용은 고른 실행 전체에 대해 확인 코드를 한 번 입력한다. 실행마다 결정 기록(`approvals/decision.json`)이 따로 남고, 둘 이상을 함께 수용한 기록에는 `batch.run_ids`가 들어간다.
+- `approve batch`는 `approve record`와 같은 관문을 지난다. AI 에이전트 세션 안에서는 실행되지 않고, 항상 터미널이 필요하며, Claude Code 권한 규칙에서 거부(deny) 대상이다. `--sign-key`를 주면 기록에 서명한다.
+- `approve queue --repo <path>`는 같은 목록을 JSON으로 출력하고 아무것도 바꾸지 않는다.
+- 수용 조건은 바뀌지 않았다. 검증한 뒤 작업 트리가 달라진 실행은 `STALE_SNAPSHOT`으로 표시되고 수용할 수 없다. 같은 저장소에서 다음 실행을 이어서 진행하면 앞선 실행은 이 상태가 된다. 다시 검증해 보고서를 재발행하거나, 이후 작업으로 대체됐다면 닫는다.
+- `checkpoint close --repo <path> --run-id <id>[,<id>...] --reason "<사유>" [--superseded-by <run-id>]`는 실행을 수용 없이 끝낸다. 상태는 `ABORTED`가 되고 체크포인트의 `closure`에 사유, 닫기 전 상태, 닫은 경로(`agent_session`, `interactive_terminal`, `non_interactive`)가 남는다. 결정 기록은 만들지 않으며 증거는 그대로 둔다. 여러 실행을 줄 때는 모두 닫을 수 있어야 닫는다.
+- 닫기는 수용이 아니므로 에이전트 세션에서도 실행할 수 있다. Claude Code에서는 권한 규칙이 사용자에게 확인을 묻는다(ask). 이미 결정이 기록된 실행(`ACCEPTED`, `REJECTED` 등)은 닫을 수 없다.
+- `approve` 명령은 사람이 검토 보고서를 읽으며 답하는 동안 기다리므로 디스패처의 명령 시간 제한을 적용하지 않는다.

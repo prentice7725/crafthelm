@@ -273,6 +273,9 @@ export function describeSessionStatus(params) {
         : '  Do not edit files for them or re-verify them, and never record their decision yourself. Report to the user; the next step is theirs.',
       `  Details of one: ${cli} status ${repoFlag} --run-id <run> --explain`,
     );
+    if (waiting.filter((run) => run.state === STATES.READY_FOR_HUMAN_REVIEW).length > 1) {
+      lines.push(`  The user can decide them in one sitting, in a terminal outside this session: ${cli} approve batch ${repoFlag} --actor <name>. It also closes runs that later work replaced.`);
+    }
   }
   return lines.join('\n');
 }

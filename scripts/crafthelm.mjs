@@ -3,7 +3,9 @@ import path from 'node:path';
 import { isMainModule } from './lib/cli.mjs';
 import { CRAFTHELM_ROOT } from './lib/paths.mjs';
 
-export const LONG_RUNNING_COMMANDS = new Set(['verify', 'feedback', 'benchmark']);
+// `approve` waits on a person reading review packages at a prompt; cutting it off mid-answer would
+// record nothing and look like a hang.
+export const LONG_RUNNING_COMMANDS = new Set(['verify', 'feedback', 'benchmark', 'approve']);
 // A guard against a hung subcommand, not a performance budget: hashing a repository with large
 // files can take minutes. CRAFTHELM_CLI_TIMEOUT_MS overrides it; 0 turns it off.
 export const DEFAULT_CLI_TIMEOUT_MS = 300_000;
@@ -77,14 +79,14 @@ function printHelp() {
       '  install-skills   Register CraftHelm skill packages into Claude Code, Codex, and Gemini/Antigravity',
       '  interview        Run Source-First intake and generate contract + specs',
       '  contract         validate | plan | add-e2e | add-test | approve an execution contract',
-      '  checkpoint       init | acquire-lock | release-lock | stage | approve-stage | transition | record-repair | resume | handoff | replan | rebaseline | status',
+      '  checkpoint       init | acquire-lock | release-lock | stage | approve-stage | transition | record-repair | resume | handoff | replan | rebaseline | close | status',
       '  impact           Run AST + call-graph diff impact analysis and selective test recommendation',
       '  route            Route task to cost-efficient tier (deterministic | lightweight | standard | reasoning)',
       '  delegate         run | record | status: dispatch a worker on the active host and record what actually ran',
       '  verify           Execute AC checks (--selective supported), E2E/property/differential tests, reliability rules',
       '  feedback         Run bounded verify -> feedback -> repair -> READY_FOR_HUMAN_REVIEW loop',
       '  review-package   Generate 8-section Markdown package, validate links/ACs, run Kouetsu editorial check',
-      '  approve          record | verify explicit human acceptance decisions',
+      '  approve          record | batch | queue | verify explicit human acceptance decisions',
       '  memory           index | search | decide | list Markdown SOT + SQLite FTS5 memory',
       '  skills           list | audit | lock | verify-lock external skills',
       '  benchmark        Run deterministic E01-E04, E10 comparison suite',

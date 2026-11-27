@@ -5,7 +5,7 @@ import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
 import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
 import { computeSnapshotDigest, getChangedFiles, getGitHead, isGitRepo, runGit } from './lib/git.mjs';
 import { buildHandoffPacket } from './lib/handoff.mjs';
-import { assertHumanInteractive, evaluateDecisionIdentity, loadApproversPolicy } from './lib/human-gate.mjs';
+import { assertHumanInteractive, classifyApprovalChannel, evaluateDecisionIdentity, loadApproversPolicy } from './lib/human-gate.mjs';
 import { INTERVIEW_DOCS, withArtifactLock, writeAtomic } from './lib/task-artifacts.mjs';
 import { STANDARD_STAGES } from './lib/methodology.mjs';
 import {
@@ -20,7 +20,7 @@ import {
   toPosixPath,
 } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
-import { STATES, WATERFALL_GATED_STAGES, assertTransition } from './lib/state-machine.mjs';
+import { STATES, WATERFALL_GATED_STAGES, assertTransition, canTransition } from './lib/state-machine.mjs';
 import { assertNoForeignWriterLock, describeLockRelease, readWriterLock } from './lib/writer-lock.mjs';
 
 function readJson(filePath) {
@@ -399,6 +399,53 @@ export function transitionCheckpoint(options) {
   }
   saveCheckpoint(repoRoot, runId, checkpoint);
   return { ok: true, state: checkpoint.state };
+}
+
+/**
+ * Close a run without an acceptance decision: later work replaced it, or it is no longer wanted.
+ * Closing is not accepting. No decision record is written, the evidence stays as it is, and the
+ * checkpoint says who closed the run, from which state, and through which channel.
+ * @param {{ repo?: string, runId: string, reason: string, supersededBy?: string, actor?: string, writer?: string, channel?: string, dryRun?: boolean }} options
+ */
+export function closeRun(options) {
+  const repoRoot = path.resolve(options.repo ?? '.');
+  const runId = options.runId;
+  const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
+  if (!reason) {
+    throw new Error('CLOSE_REASON_REQUIRED: checkpoint close needs --reason "<why this run is closed without acceptance>".');
+  }
+  const checkpointPath = getCheckpointPath(repoRoot, runId);
+  if (!fs.existsSync(checkpointPath)) {
+    throw new Error(`RUN_NOT_FOUND: no run "${runId}" in ${repoRoot}. Run "status --repo <path>" to list runs.`);
+  }
+  assertNoForeignWriterLock(repoRoot, runId, options.writer, 'close');
+  const checkpoint = readJson(checkpointPath);
+  if (checkpoint.state === STATES.ABORTED) {
+    throw new Error(`RUN_ALREADY_CLOSED: run "${runId}" is already ${checkpoint.state}.`);
+  }
+  if (!canTransition(checkpoint.state, STATES.ABORTED)) {
+    throw new Error(`RUN_NOT_CLOSABLE: run "${runId}" is ${checkpoint.state}; a run that already has its decision is not closed.`);
+  }
+  const supersededBy = typeof options.supersededBy === 'string' && options.supersededBy.trim() ? options.supersededBy.trim() : null;
+  if (supersededBy === runId) {
+    throw new Error(`SUPERSEDING_RUN_INVALID: run "${runId}" cannot be replaced by itself.`);
+  }
+  if (supersededBy && !fs.existsSync(getCheckpointPath(repoRoot, supersededBy))) {
+    throw new Error(`SUPERSEDING_RUN_INVALID: --superseded-by "${supersededBy}" is not a run in ${repoRoot}.`);
+  }
+  const closure = {
+    reason,
+    previous_state: checkpoint.state,
+    closed_at: new Date().toISOString(),
+    closed_via: options.channel ?? classifyApprovalChannel(),
+    ...(typeof options.actor === 'string' && options.actor.trim() ? { actor: options.actor.trim() } : {}),
+    ...(supersededBy ? { superseded_by: supersededBy } : {}),
+  };
+  if (options.dryRun) return { ok: true, run_id: runId, state: checkpoint.state, would_close: true };
+  checkpoint.state = STATES.ABORTED;
+  checkpoint.closure = closure;
+  saveCheckpoint(repoRoot, runId, checkpoint);
+  return { ok: true, run_id: runId, state: checkpoint.state, closure };
 }
 
 /**
@@ -802,6 +849,7 @@ export function statusCheckpoint(options) {
     current_snapshot: currentSnapshot,
     repair_rounds: checkpoint.repair_rounds,
     blocked_reason: checkpoint.blocked_reason ?? null,
+    ...(checkpoint.closure ? { closure: checkpoint.closure } : {}),
   };
 }
 
@@ -810,7 +858,7 @@ function printUsage() {
     [
       'CraftHelm Checkpoint CLI (Run Lifecycle State, Single-Writer Lock, Handoff & Replan)',
       '',
-      'Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|status|audit> --repo <path> --run-id <id> [options]',
+      'Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|close|status|audit> --repo <path> --run-id <id> [options]',
       '',
       '  init --repo <path> --contract <contractPath> [--run-id <id>] [--baseline-ref <commit>]',
       '       --baseline-ref  Start the run at an earlier commit, so work already committed is verified too.',
@@ -818,6 +866,10 @@ function printUsage() {
       '       Re-freeze the baseline of tooling files (skill installs, .crafthelm/skills.lock.json,',
       '       .crafthelm/config.json, .claude/settings.json, GEMINI.md) after you updated them mid-run,',
       '       so verify stops counting that update as SCOPE_VIOLATION. Run it yourself, outside an AI session.',
+      '  close --repo <path> --run-id <id>[,<id>...] --reason "<text>" [--superseded-by <run-id>] [--actor <name>]',
+      '       Close runs without an acceptance decision, for work that later runs replaced or that is no',
+      '       longer wanted. This is not acceptance: no decision record is written. Nothing is closed',
+      '       unless every listed run can be.',
       '',
     ].join('\n'),
   );
@@ -851,8 +903,20 @@ if (isMainModule(import.meta.url)) {
     else if (sub === 'handoff') out = createHandoff({ repo: args.repo, runId: args['run-id'], docsDir: args['docs-dir'] });
     else if (sub === 'replan') out = replanRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, reason: args.reason, writer: args.writer });
     else if (sub === 'rebaseline') out = rebaselineToolingFiles({ repo: args.repo, runId: args['run-id'], reason: args.reason, writer: args.writer, docsDir: args['docs-dir'] });
+    else if (sub === 'close') {
+      const runIds = [...new Set(String(args['run-id']).split(',').map((id) => id.trim()).filter(Boolean))];
+      const closeOptions = (runId) => ({
+        repo: args.repo, runId, reason: args.reason, writer: args.writer,
+        supersededBy: typeof args['superseded-by'] === 'string' ? args['superseded-by'] : undefined,
+        actor: typeof args.actor === 'string' ? args.actor : undefined,
+      });
+      // All or nothing: a typo in the third id must not leave the first two closed.
+      for (const runId of runIds) closeRun({ ...closeOptions(runId), dryRun: true });
+      const closed = runIds.map((runId) => closeRun(closeOptions(runId)));
+      out = { ok: true, closed: closed.map((c) => ({ run_id: c.run_id, previous_state: c.closure.previous_state })), closed_via: closed[0]?.closure.closed_via ?? null };
+    }
     else if (sub === 'status' || sub === 'audit') out = statusCheckpoint({ repo: args.repo, runId: args['run-id'] });
-    else throw new Error('Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|status|audit> ...');
+    else throw new Error('Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|close|status|audit> ...');
 
     process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     if (out && out.ok === false) process.exit(1);

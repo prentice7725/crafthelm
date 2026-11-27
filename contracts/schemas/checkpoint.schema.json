@@ -226,6 +226,19 @@
     "blocked_reason": {
       "type": "string"
     },
+    "closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "previous_state", "closed_at", "closed_via"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "previous_state": { "type": "string", "minLength": 1 },
+        "closed_at": { "type": "string", "minLength": 1 },
+        "closed_via": { "type": "string", "enum": ["agent_session", "interactive_terminal", "non_interactive"] },
+        "actor": { "type": "string", "minLength": 1 },
+        "superseded_by": { "type": "string", "minLength": 1 }
+      }
+    },
     "updated_at": {
       "type": "string",
       "minLength": 1

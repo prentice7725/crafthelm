@@ -16,7 +16,10 @@
       "Bash(*--approve-contract*)",
       "Bash(*checkpoint.mjs approve-stage*)",
       "Bash(*crafthelm.mjs checkpoint approve-stage*)",
-      "Bash(*crafthelm checkpoint approve-stage*)"
+      "Bash(*crafthelm checkpoint approve-stage*)",
+      "Bash(*checkpoint.mjs close*)",
+      "Bash(*crafthelm.mjs checkpoint close*)",
+      "Bash(*crafthelm checkpoint close*)"
     ],
     "deny": [
       "Bash(git push*)",
@@ -24,6 +27,9 @@
       "Bash(*approval.mjs record*)",
       "Bash(*crafthelm.mjs approve record*)",
       "Bash(*crafthelm approve record*)",
+      "Bash(*approval.mjs batch*)",
+      "Bash(*crafthelm.mjs approve batch*)",
+      "Bash(*crafthelm approve batch*)",
       "Bash(*approval.mjs keygen*)",
       "Bash(*crafthelm.mjs approve keygen*)",
       "Bash(*crafthelm approve keygen*)"
