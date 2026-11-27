@@ -5,6 +5,7 @@ import { inspectClaudeScopeHook, inspectClaudeStatusHook } from './lib/claude-ho
 import { inspectClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { runCommand } from './lib/exec.mjs';
+import { cliInvocation } from './lib/paths.mjs';
 
 /**
  * Probe host environment capabilities for any built-in or custom/generic single-provider host
@@ -74,6 +75,9 @@ export function runDoctor(options = {}) {
   // Claude Code setup drift: guards missing from settings, or a skill copy older than this checkout.
   // Advisory only: these never change `ok`, they tell the operator what to re-run.
   const warnings = [];
+  // Fix commands are run from the target repository, where `scripts/` is not CraftHelm's.
+  const cli = cliInvocation(options.repo ?? process.cwd());
+  const repoFlag = options.repo ? ` --repo "${options.repo}"` : ' --repo <repo>';
   if (hosts.claude) {
     const guards = inspectClaudePermissionGuards({ homeDir: options.homeDir, repoRoot: options.repo });
     hosts.claude.permission_guards = guards;
@@ -82,7 +86,7 @@ export function runDoctor(options = {}) {
       warnings.push({
         code: 'CLAUDE_PERMISSION_GUARDS_MISSING',
         detail: `Claude settings lack ${missing.length} approval guard rule(s): ${missing.join(', ')}`,
-        fix: 'node scripts/install-skills.mjs --targets claude (or init-host --host claude for a project)',
+        fix: `${cli} install-skills --targets claude (or ${cli} init-host --host claude${repoFlag} for a project)`,
       });
     }
     for (const f of guards.files.filter((x) => x.error)) {
@@ -95,7 +99,7 @@ export function runDoctor(options = {}) {
         warnings.push({
           code: statusHook.status === 'STALE' ? 'CLAUDE_STATUS_HOOK_STALE' : 'CLAUDE_STATUS_HOOK_MISSING',
           detail: `${statusHook.settings_path} does not register the session status hook of this checkout; later turns of a session are not reminded of the open run and its scope`,
-          fix: 'node scripts/init-host.mjs --host claude --repo <repo>',
+          fix: `${cli} init-host --host claude${repoFlag}`,
         });
       }
       const scopeHook = inspectClaudeScopeHook({ repoRoot: options.repo });
@@ -106,19 +110,29 @@ export function runDoctor(options = {}) {
           detail: scopeHook.status === 'STALE'
             ? `${scopeHook.settings_path} registers a scope guard from another CraftHelm path; writes outside scope.allow are not blocked until it points at this checkout`
             : `${scopeHook.settings_path} has no scope guard hook; writes outside scope.allow are reported by verify but not blocked beforehand`,
-          fix: 'node scripts/init-host.mjs --host claude --repo <repo>',
+          fix: `${cli} init-host --host claude${repoFlag}`,
         });
       }
     }
     const scopes = [{ scope: 'user' }, ...(options.repo ? [{ scope: 'project', repoRoot: options.repo }] : [])];
     const copies = scopes.flatMap((s) => getSkillsInstallStatus({ targets: 'claude', homeDir: options.homeDir, ...s }).targets)
-      .map((t) => ({ scope: t.scope, skill_dir: t.skill_dir, status: t.status }));
+      .map((t) => ({ scope: t.scope, skill_dir: t.skill_dir, status: t.status, ...(t.differs === undefined ? {} : { differs: t.differs }) }));
     hosts.claude.skill_copies = copies;
+    const scopeFlags = (c) => `--scope ${c.scope}${c.scope === 'project' ? repoFlag : ''}`;
     for (const c of copies.filter((x) => x.status === 'OUTDATED')) {
       warnings.push({
         code: 'CLAUDE_SKILL_OUTDATED',
         detail: `${c.scope} skill copy at ${c.skill_dir} differs from this CraftHelm checkout`,
-        fix: `node scripts/install-skills.mjs --targets claude --scope ${c.scope}`,
+        fix: `${cli} install-skills --targets claude ${scopeFlags(c)}`,
+      });
+    }
+    // A copy with no install manifest is skipped by install-skills, so updating the skill leaves it
+    // as it was. In a project it is also the copy the agent reads when both scopes have one.
+    for (const c of copies.filter((x) => x.status === 'UNMANAGED' && x.differs)) {
+      warnings.push({
+        code: 'CLAUDE_SKILL_UNMANAGED',
+        detail: `${c.scope} skill copy at ${c.skill_dir} differs from this CraftHelm checkout and has no install manifest, so install-skills does not update it${c.scope === 'project' ? '; a project copy is read in place of the user copy' : ''}`,
+        fix: `${cli} install-skills --targets claude ${scopeFlags(c)} --force (replaces the copy; keep any edits you made to it first)`,
       });
     }
   }
