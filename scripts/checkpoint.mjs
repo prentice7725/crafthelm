@@ -3,7 +3,7 @@ import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File } from './lib/crypto.mjs';
 import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
-import { computeSnapshotDigest, getChangedFiles, getGitHead, isGitRepo } from './lib/git.mjs';
+import { computeSnapshotDigest, getChangedFiles, getGitHead, isGitRepo, runGit } from './lib/git.mjs';
 import { buildHandoffPacket } from './lib/handoff.mjs';
 import { evaluateDecisionIdentity, loadApproversPolicy } from './lib/human-gate.mjs';
 import { INTERVIEW_DOCS, withArtifactLock, writeAtomic } from './lib/task-artifacts.mjs';
@@ -29,7 +29,7 @@ function readJson(filePath) {
 
 const writeJson = writeJsonAtomic;
 
-function computeFileMapHashes(repoRoot, patterns) {
+function computeFileMapHashes(repoRoot, patterns, fileHashes = null) {
   const result = {};
   if (!patterns || patterns.length === 0) return result;
   const walk = (dir, prefix) => {
@@ -42,7 +42,8 @@ function computeFileMapHashes(repoRoot, patterns) {
       } else if (entry.isFile()) {
         const posixRel = toPosixPath(rel);
         if (matchesAnyGlob(posixRel, patterns)) {
-          result[posixRel] = sha256File(path.join(dir, entry.name));
+          result[posixRel] = fileHashes?.get(posixRel) ?? sha256File(path.join(dir, entry.name));
+          fileHashes?.set(posixRel, result[posixRel]);
         }
       }
     }
@@ -172,8 +173,24 @@ function initializeCheckpoint(options) {
     writeJson(canonicalContractPath, contract);
   }
 
-  const baselineHead = isGitRepo(repoRoot) ? getGitHead(repoRoot) : 'NO_GIT';
-  const snapshotDigest = computeSnapshotDigest(repoRoot);
+  let baselineHead = isGitRepo(repoRoot) ? getGitHead(repoRoot) : 'NO_GIT';
+  if (options.baselineRef) {
+    // Work committed before the run was opened is otherwise invisible: scope, impact and the diff
+    // all start at the baseline. An earlier baseline only widens what verify looks at, so the ref
+    // must be an ancestor of HEAD.
+    const resolved = runGit(repoRoot, ['rev-parse', '--verify', '--quiet', `${options.baselineRef}^{commit}`]);
+    const sha = resolved.stdout.trim();
+    if (resolved.exitCode !== 0 || !sha) {
+      throw new Error(`BASELINE_REF_INVALID: "${options.baselineRef}" is not a commit in this repository.`);
+    }
+    if (runGit(repoRoot, ['merge-base', '--is-ancestor', sha, 'HEAD']).exitCode !== 0) {
+      throw new Error(`BASELINE_REF_INVALID: "${options.baselineRef}" is not an ancestor of HEAD. The baseline can only be moved back along the current history.`);
+    }
+    baselineHead = sha;
+  }
+  // One read of each file serves both the snapshot and the protected-file hashes below.
+  const fileHashes = new Map();
+  const snapshotDigest = computeSnapshotDigest(repoRoot, { fileHashes });
   const lockPath = getSkillLockPath(repoRoot);
   const skillLockSha = fs.existsSync(lockPath) ? sha256File(lockPath) : 'none';
 
@@ -195,7 +212,7 @@ function initializeCheckpoint(options) {
     baseline_git_head: baselineHead,
     target_snapshot_digest: snapshotDigest,
     skill_lock_sha256: skillLockSha,
-    protected_file_hashes: computeFileMapHashes(repoRoot, protectedPatterns),
+    protected_file_hashes: computeFileMapHashes(repoRoot, protectedPatterns, fileHashes),
     baseline_crafthelm_files: computeBaselineCraftHelmFiles(repoRoot, options.docsDir ?? 'docs', contract.task_id),
     sot_hashes: computeSotHashes(repoRoot, contract.source_policy?.source_refs),
     repair_rounds: {},
@@ -526,7 +543,9 @@ export function resumeRun(options) {
     'REVIEW.md',
     '.crafthelm/reliability-rules.json',
   ];
-  const currentProtected = computeFileMapHashes(repoRoot, protectedPatterns);
+  // Shared with the snapshot digest computed just below; nothing runs between the two.
+  const fileHashes = new Map();
+  const currentProtected = computeFileMapHashes(repoRoot, protectedPatterns, fileHashes);
   for (const [k, oldHash] of Object.entries(checkpoint.protected_file_hashes ?? {})) {
     if (currentProtected[k] !== oldHash) {
       reasons.push(`Protected path "${k}" modified since checkpoint`);
@@ -545,7 +564,7 @@ export function resumeRun(options) {
     };
   }
 
-  const currentSnapshot = computeSnapshotDigest(repoRoot);
+  const currentSnapshot = computeSnapshotDigest(repoRoot, { fileHashes });
   const lockPathSkill = getSkillLockPath(repoRoot);
   const currentSkillLockSha = fs.existsSync(lockPathSkill) ? sha256File(lockPathSkill) : 'none';
   if (currentSkillLockSha !== checkpoint.skill_lock_sha256) {
@@ -709,7 +728,8 @@ export function statusCheckpoint(options) {
   const repoRoot = path.resolve(options.repo ?? '.');
   const runId = options.runId;
   const checkpoint = readJson(getCheckpointPath(repoRoot, runId));
-  const currentSnapshot = computeSnapshotDigest(repoRoot);
+  // The digest covers the whole tree; a caller listing many runs computes it once and passes it in.
+  const currentSnapshot = options.currentSnapshot ?? computeSnapshotDigest(repoRoot);
   return {
     run_id: checkpoint.run_id,
     task_id: checkpoint.task_id,
@@ -731,6 +751,9 @@ function printUsage() {
       '',
       'Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|status|audit> --repo <path> --run-id <id> [options]',
       '',
+      '  init --repo <path> --contract <contractPath> [--run-id <id>] [--baseline-ref <commit>]',
+      '       --baseline-ref  Start the run at an earlier commit, so work already committed is verified too.',
+      '',
     ].join('\n'),
   );
 }
@@ -745,7 +768,14 @@ if (isMainModule(import.meta.url)) {
   const sub = args._[0];
   try {
     let out;
-    if (sub === 'init') out = initCheckpoint({ repo: args.repo, contract: args.contract, runId: args['run-id'], docsDir: args['docs-dir'] });
+    if (sub === 'init') {
+      const contract = args.contract ?? (typeof args['task-id'] === 'string' ? getContractPath(path.resolve(args.repo ?? '.'), args['task-id']) : undefined);
+      if (typeof contract !== 'string') {
+        throw new Error('checkpoint init needs the contract: checkpoint init --repo <path> --contract <contractPath> [--run-id <id>] (or --task-id <id> to use .crafthelm/contracts/<id>.json)');
+      }
+      out = initCheckpoint({ repo: args.repo, contract, runId: args['run-id'], docsDir: args['docs-dir'], baselineRef: typeof args['baseline-ref'] === 'string' ? args['baseline-ref'] : undefined });
+    }
+    else if (!args['run-id'] || args['run-id'] === true) throw new Error(`checkpoint ${sub ?? ''} needs --run-id <id>. Run "status --repo <path>" to list runs.`.replace('  ', ' '));
     else if (sub === 'acquire-lock') out = acquireWriterLock({ repo: args.repo, runId: args['run-id'], writer: args.writer });
     else if (sub === 'release-lock') out = releaseWriterLock({ repo: args.repo, runId: args['run-id'], writer: args.writer, force: Boolean(args.force) });
     else if (sub === 'stage') out = recordStage({ repo: args.repo, runId: args['run-id'], stage: args.stage ?? args._[1], status: args.status, contract: args.contract, writer: args.writer });

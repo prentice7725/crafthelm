@@ -10,6 +10,18 @@ const __dirname = path.dirname(__filename);
 export const CRAFTHELM_ROOT = path.resolve(__dirname, '..', '..');
 
 /**
+ * How to invoke the CLI from where the caller is. Inside the CraftHelm checkout the short relative
+ * form works; from a target repository there is no `scripts/crafthelm.mjs`, so the absolute path is given.
+ * @param {string} [cwd]
+ * @returns {string}
+ */
+export function cliInvocation(cwd = process.cwd()) {
+  const here = path.resolve(cwd);
+  const same = process.platform === 'win32' ? here.toLowerCase() === CRAFTHELM_ROOT.toLowerCase() : here === CRAFTHELM_ROOT;
+  return same ? 'node scripts/crafthelm.mjs' : `node "${path.join(CRAFTHELM_ROOT, 'scripts', 'crafthelm.mjs').replace(/\\/g, '/')}"`;
+}
+
+/**
  * Normalize a path to POSIX forward slashes and strip leading `./`.
  * @param {string} inputPath
  * @returns {string}

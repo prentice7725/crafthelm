@@ -9,10 +9,18 @@ import { approveContractFile } from '../../scripts/contract.mjs';
 import { runDoctor } from '../../scripts/doctor.mjs';
 import { initHost } from '../../scripts/init-host.mjs';
 import { installSkills } from '../../scripts/install-skills.mjs';
-import { SCOPE_GUARD_MATCHER, applyClaudeScopeHook, inspectClaudeScopeHook, scopeGuardCommand } from '../../scripts/lib/claude-hooks.mjs';
+import {
+  SCOPE_GUARD_MATCHER,
+  applyClaudeScopeHook,
+  applyClaudeStatusHook,
+  inspectClaudeScopeHook,
+  inspectClaudeStatusHook,
+  scopeGuardCommand,
+  sessionStatusCommand,
+} from '../../scripts/lib/claude-hooks.mjs';
 import { runGit } from '../../scripts/lib/git.mjs';
 import { CRAFTHELM_ROOT, getCheckpointPath } from '../../scripts/lib/paths.mjs';
-import { evaluateHookPayload, evaluateWrite, listActiveScopes } from '../../scripts/lib/scope-guard.mjs';
+import { describeSessionStatus, evaluateHookPayload, evaluateWrite, findCraftHelmRepo, listActiveScopes } from '../../scripts/lib/scope-guard.mjs';
 
 const HOOK_SCRIPT = path.join(CRAFTHELM_ROOT, 'scripts', 'hooks', 'scope-guard.mjs');
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -72,7 +80,7 @@ describe('Scope guard: the contract scope applied before the write', () => {
       assert.equal(at('README.md').code, 'NOT_A_CRAFTHELM_REPO');
 
       startRun(repo, 'GUARD', 'GUARD-RUN', { allow: ['src/**'], protect: ['src/generated/**'] });
-      assert.deepEqual(listActiveScopes(repo), [{ run_id: 'GUARD-RUN', task_id: 'GUARD', allow: ['src/**'], protect: ['src/generated/**'] }]);
+      assert.deepEqual(listActiveScopes(repo), [{ run_id: 'GUARD-RUN', task_id: 'GUARD', state: 'READY', allow: ['src/**'], protect: ['src/generated/**'] }]);
 
       assert.deepEqual([at('src/app.mjs').decision, at('src/app.mjs').code], ['allow', 'IN_SCOPE']);
       assert.deepEqual([at('src/new/feature.mjs').decision, at('src/new/feature.mjs').code], ['allow', 'IN_SCOPE']);
@@ -253,22 +261,98 @@ describe('Scope guard registration in Claude project settings', () => {
     try {
       assert.equal(initHost({ repo, host: 'claude', skipClaudeHooks: true }).claude_scope_hook, undefined);
       assert.ok(doctorCodes().includes('CLAUDE_SCOPE_HOOK_MISSING'));
+      assert.ok(doctorCodes().includes('CLAUDE_STATUS_HOOK_MISSING'));
 
       const res = initHost({ repo, host: 'claude' });
       assert.equal(res.claude_scope_hook.action, 'ADDED');
       const settings = readJson(path.join(repo, '.claude', 'settings.json'));
       assert.equal(settings.hooks.PreToolUse[0].hooks[0].command, scopeGuardCommand());
       assert.ok(settings.permissions.deny.length > 0);
-      assert.ok(!doctorCodes().some((c) => c.startsWith('CLAUDE_SCOPE_HOOK')));
+      assert.ok(!doctorCodes().some((c) => c.startsWith('CLAUDE_SCOPE_HOOK') || c.startsWith('CLAUDE_STATUS_HOOK')));
+      assert.equal(res.claude_status_hook.action, 'ADDED');
+      assert.equal(settings.hooks.SessionStart[0].hooks[0].command, sessionStatusCommand());
+      assert.equal(settings.hooks.UserPromptSubmit[0].hooks[0].command, sessionStatusCommand());
 
       const user = installSkills({ targets: 'claude', scope: 'user', homeDir });
       assert.equal(user.results[0].claude_scope_hook, undefined);
       assert.equal(readJson(path.join(homeDir, '.claude', 'settings.json')).hooks, undefined);
       const project = installSkills({ targets: 'claude', scope: 'project', homeDir, repoRoot: repo, force: true });
       assert.equal(project.results[0].claude_scope_hook.action, 'UNCHANGED');
+      assert.equal(project.results[0].claude_status_hook.action, 'UNCHANGED');
+      assert.equal(user.results[0].claude_status_hook, undefined);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
       fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Session status hook: the open run stays in front of the agent after the skill was read', () => {
+  const STATUS_HOOK = path.join(CRAFTHELM_ROOT, 'scripts', 'hooks', 'session-status.mjs');
+  const runStatusHook = (payload) => spawnSync(process.execPath, [STATUS_HOOK], { input: typeof payload === 'string' ? payload : JSON.stringify(payload), encoding: 'utf8', windowsHide: true });
+
+  it('names the run, its scope and the next command on every prompt, and what to do when a person must decide', () => {
+    const repo = makeRepo();
+    try {
+      // No CraftHelm setup yet: nothing to say, and a bare .crafthelm directory is not a setup.
+      assert.equal(describeSessionStatus({ cwd: repo, event: 'SessionStart' }), '');
+      fs.mkdirSync(path.join(repo, '.crafthelm'));
+      assert.equal(findCraftHelmRepo(repo), findCraftHelmRepo(path.dirname(repo)));
+
+      startRun(repo, 'TURN', 'TURN-RUN', { allow: ['src/**'], protect: ['src/generated/**'] });
+      const text = describeSessionStatus({ cwd: path.join(repo, 'src'), event: 'UserPromptSubmit' });
+      assert.match(text, /^CraftHelm: run TURN-RUN \(task TURN\) is READY\./);
+      assert.match(text, /Write only inside scope\.allow: src\/\*\*\. Never inside scope\.protect: src\/generated\/\*\*\./);
+      assert.match(text, /After editing, verify with: node ".*scripts\/crafthelm\.mjs" verify --repo ".*" --run-id TURN-RUN --selective/);
+      assert.match(text, /status --repo ".*" --run-id TURN-RUN --explain/);
+
+      const viaHook = runStatusHook({ hook_event_name: 'UserPromptSubmit', cwd: repo, prompt: 'continue' });
+      assert.deepEqual([viaHook.status, viaHook.stdout.trim()], [0, describeSessionStatus({ cwd: repo, event: 'UserPromptSubmit' })]);
+
+      const checkpointPath = getCheckpointPath(repo, 'TURN-RUN');
+      const setState = (state) => fs.writeFileSync(checkpointPath, JSON.stringify({ ...readJson(checkpointPath), state }), 'utf8');
+      setState('READY_FOR_HUMAN_REVIEW');
+      const waiting = describeSessionStatus({ cwd: repo, event: 'UserPromptSubmit' });
+      assert.match(waiting, /waiting for the human acceptance decision\. Do not edit files, and never record the decision yourself\./);
+      assert.doesNotMatch(waiting, /After editing/);
+      setState('BLOCKED_HUMAN_ATTENTION');
+      assert.match(describeSessionStatus({ cwd: repo, event: 'UserPromptSubmit' }), /repair limit is used up\. Stop and report to the user/);
+
+      // With the run over, a new session is told to start one; later prompts are left alone.
+      setState('ACCEPTED');
+      assert.match(describeSessionStatus({ cwd: repo, event: 'SessionStart' }), /no run is in progress\. Before changing code, start one with: .* start "<task>" --repo ".*"\. The user approves the contract; you do not\./);
+      assert.equal(describeSessionStatus({ cwd: repo, event: 'UserPromptSubmit' }), '');
+      assert.deepEqual([runStatusHook({ hook_event_name: 'UserPromptSubmit', cwd: repo }).stdout, runStatusHook('not json').status], ['', 0]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('registers on both events beside the scope guard, and reports an incomplete registration', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crafthelm-status-hook-'));
+    try {
+      const settingsPath = path.join(dir, '.claude', 'settings.json');
+      assert.equal(applyClaudeScopeHook({ settingsPath }).action, 'ADDED');
+      assert.equal(inspectClaudeStatusHook({ repoRoot: dir }).status, 'MISSING');
+      assert.equal(applyClaudeStatusHook({ settingsPath, dryRun: true }).action, 'WOULD_ADD');
+      assert.equal(applyClaudeStatusHook({ settingsPath }).action, 'ADDED');
+      const hooks = readJson(settingsPath).hooks;
+      assert.deepEqual(Object.keys(hooks).sort(), ['PreToolUse', 'SessionStart', 'UserPromptSubmit']);
+      // Prompt and session hooks take no tool matcher.
+      assert.deepEqual(hooks.UserPromptSubmit, [{ hooks: [{ type: 'command', command: sessionStatusCommand() }] }]);
+      assert.equal(inspectClaudeStatusHook({ repoRoot: dir }).status, 'REGISTERED');
+      assert.equal(inspectClaudeScopeHook({ repoRoot: dir }).status, 'REGISTERED');
+      assert.equal(applyClaudeStatusHook({ settingsPath }).action, 'UNCHANGED');
+
+      // One event removed by hand: reported as missing and put back without duplicating the other.
+      const edited = readJson(settingsPath);
+      delete edited.hooks.SessionStart;
+      fs.writeFileSync(settingsPath, JSON.stringify(edited));
+      assert.equal(inspectClaudeStatusHook({ repoRoot: dir }).status, 'MISSING');
+      assert.equal(applyClaudeStatusHook({ settingsPath }).action, 'ADDED');
+      assert.deepEqual([readJson(settingsPath).hooks.SessionStart.length, readJson(settingsPath).hooks.UserPromptSubmit.length], [1, 1]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

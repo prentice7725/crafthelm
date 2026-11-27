@@ -4,7 +4,9 @@ import { isMainModule } from './lib/cli.mjs';
 import { CRAFTHELM_ROOT } from './lib/paths.mjs';
 
 export const LONG_RUNNING_COMMANDS = new Set(['verify', 'feedback', 'benchmark']);
-export const DEFAULT_CLI_TIMEOUT_MS = 120_000;
+// A guard against a hung subcommand, not a performance budget: hashing a repository with large
+// files can take minutes. CRAFTHELM_CLI_TIMEOUT_MS overrides it; 0 turns it off.
+export const DEFAULT_CLI_TIMEOUT_MS = 300_000;
 
 /**
  * Resolve overall CLI process timeout in ms (`0` disables parent cutoff for long-running suites).
@@ -65,6 +67,7 @@ function printHelp() {
       'CraftHelm CLI (v0.1.0 / Spec v0.3)',
       '',
       'Usage: crafthelm <command> [options]',
+      '       crafthelm help [command]     (same as <command> --help)',
       '',
       'Commands:',
       '  start            Detect host/test runners, run interview, and print the next command',
@@ -100,19 +103,24 @@ if (isMainModule(import.meta.url)) {
   const args = process.argv.slice(2);
   const sub = args[0];
 
-  if (!sub || sub === '--help' || sub === '-h') {
+  if (!sub || sub === '--help' || sub === '-h' || (sub === 'help' && !args[1])) {
     printHelp();
     process.exit(0);
   }
+  // `help <command>` is `<command> --help`.
+  if (sub === 'help') {
+    args.splice(0, 2, args[1], '--help');
+  }
 
-  const scriptRel = SUBCOMMANDS.get(sub);
+  const command = args[0];
+  const scriptRel = SUBCOMMANDS.get(command);
   if (!scriptRel) {
-    process.stderr.write(`Unknown command "${sub}". Run "crafthelm --help" for usage.\n`);
+    process.stderr.write(`Unknown command "${command}". Run "crafthelm --help" for usage.\n`);
     process.exit(1);
   }
 
   const scriptAbs = path.join(CRAFTHELM_ROOT, scriptRel);
-  const timeout = resolveCommandTimeoutMs(sub, process.env);
+  const timeout = resolveCommandTimeoutMs(command, process.env);
   const res = spawnSync(process.execPath, [scriptAbs, ...args.slice(1)], {
     cwd: process.cwd(),
     stdio: 'inherit',
@@ -122,7 +130,7 @@ if (isMainModule(import.meta.url)) {
 
   if (res.error) {
     if (res.error.code === 'ETIMEDOUT') {
-      process.stderr.write(`Command "${sub}" timed out after ${timeout}ms (set CRAFTHELM_CLI_TIMEOUT_MS to override).\n`);
+      process.stderr.write(`Command "${command}" timed out after ${timeout}ms and was stopped; it did not finish (exit code 124). Set CRAFTHELM_CLI_TIMEOUT_MS to a larger value, or 0 for no limit.\n`);
       process.exit(124);
     }
     process.stderr.write(`${res.error.message}\n`);
@@ -131,6 +139,6 @@ if (isMainModule(import.meta.url)) {
   if (typeof res.status === 'number') {
     process.exit(res.status);
   }
-  process.stderr.write(`Command "${sub}" terminated by signal ${res.signal ?? 'unknown'}.\n`);
+  process.stderr.write(`Command "${command}" terminated by signal ${res.signal ?? 'unknown'}.\n`);
   process.exit(1);
 }

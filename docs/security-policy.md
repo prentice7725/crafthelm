@@ -18,6 +18,7 @@
 | 실행 디렉터리의 그 밖의 모든 파일 | 차단 (활성 실행이 없어도) | `SCRIPT_OWNED_ARTIFACT` |
 | `.crafthelm/contracts/**`, `.claude/settings.json`, `.claude/settings.local.json`, `.crafthelm/approvers.json`, `.crafthelm/config.json`, `.crafthelm/skills.lock.json` | 차단 (활성 실행이 없어도) | `CONTROL_FILE` |
 | 활성 실행이 없음 | 허용 | `NO_ACTIVE_RUN` |
+| 활성 실행이 없고 `require_run_for_edits`가 켜져 있음 | 차단 (git이 무시하는 파일은 허용) | `RUN_REQUIRED` |
 | 활성 실행의 `scope.protect`에 해당 | 차단 | `PROTECTED_PATH` |
 | 활성 실행의 `scope.allow`에 해당 | 허용 | `IN_SCOPE` |
 | git이 무시하는 파일 | 허용 (`verify`도 보지 않는 파일) | `GIT_IGNORED` |
@@ -28,9 +29,21 @@
 - 계약 파일과 Claude 설정 파일은 실행이 없을 때도 파일 도구로 고칠 수 없다. 열어 두면 에이전트가 계약의 `contract_approved`를 직접 `true`로 써서 승인 명령에 걸린 `ask` 확인을 건너뛰거나, 권한 규칙과 이 훅을 지울 수 있기 때문이다. 계약은 `contract add-e2e`·`add-test`·`approve`나 새 인터뷰로 바꾸고, 설정은 사람이 고친다.
 - 경로는 디스크가 이름을 비교하는 방식대로 비교한다. 이미 있는 경로는 파일시스템에 물어 실제 표기로 바꾸므로(대소문자, Windows의 8.3 짧은 이름, 심볼릭 링크), `scope.allow` 안의 링크가 보호 파일을 가리키면 가리키는 대상으로 판정한다. 대소문자를 구분하지 않는 파일시스템(Windows, macOS 기본값)에서는 경로와 패턴을 모두 소문자로 맞춰 비교해 `.claude/Settings.json`이나 `review.md`도 같은 파일로 본다. Windows에서는 같은 파일을 가리키는 끝의 점·공백과 대체 데이터 스트림 접미사(`settings.json::$DATA`)를 떼고 판정한다.
 - 통제 파일 중 승인자 정책(`approvers.json`), 검증 설정(`config.json`), 스킬 락(`skills.lock.json`)은 실행 중에는 보호된 기준선(`policy_base_ref`)에서 읽으므로 작업 트리의 사본을 고쳐도 판정이 바뀌지 않는다. 그래도 막는 이유는 에이전트가 고친 사본이 나중에 기준선 커밋에 섞이는 일을 차단하기 때문이다.
+- 실행 없이 코드를 고치는 것 자체를 막으려면 `.crafthelm/config.json`에 `"require_run_for_edits": true`를 둔다(`init-host --require-run`이 새 설정 파일에 넣어 준다). 기본값은 꺼짐이다. 켜면 계약을 만들 것까지 없는 한 줄 수정도 막히기 때문이다. 이 설정 파일은 통제 파일이라 에이전트가 파일 도구로 끌 수 없다. 스킬을 한 번 부른 뒤 다음 작업부터 절차를 건너뛰는 일을 막는 장치는 이 설정과 세션 상태 훅이다.
 - 등록은 프로젝트 설정(`<repo>/.claude/settings.json`)에만 한다. 사용자 설정에 넣으면 모든 프로젝트의 모든 편집마다 실행되기 때문이다. 훅 명령은 CraftHelm 체크아웃의 절대 경로를 가리키므로, 체크아웃을 옮기면 `init-host --host claude`를 다시 실행해 경로를 고친다. 기존 훅은 지우거나 순서를 바꾸지 않는다.
 - 한계: 훅은 Claude Code의 파일 도구 호출만 본다. 셸 리디렉션이나 파일을 쓰는 스크립트 실행은 지나간다. 훅 자체가 실패하면(잘못된 입력, 스크립트 누락) 쓰기를 허용한다. 설정 파일을 고칠 수 있는 사람은 훅을 지울 수 있다. 그래서 훅은 범위 이탈을 일찍 알려 주는 장치이고, 판정의 근거는 여전히 `verify`의 `SCOPE_VIOLATION`·`PROTECTED_PATH_VIOLATION`이다.
 - Codex와 Antigravity에는 아직 등록 경로가 없다. 이 호스트에서는 `verify`의 사후 판정만 적용된다.
+
+## 세션 상태 훅 (Claude Code)
+
+스킬 지시문은 스킬을 부른 순간에 한 번 읽힐 뿐이고, 그 뒤 턴에서는 절차를 다시 알려 주는 것이 없다. 세션 상태 훅(`scripts/hooks/session-status.mjs`)은 Claude Code의 `SessionStart`와 `UserPromptSubmit`에 등록되어, 출력한 문장이 에이전트의 컨텍스트에 들어간다.
+
+- 활성 실행이 있으면 프롬프트마다 실행 ID와 상태, `scope.allow`와 `scope.protect`, 수정 뒤 실행할 `verify` 명령, `status --explain` 명령을 알려 준다.
+- 상태가 `READY_FOR_HUMAN_REVIEW`, `BLOCKED_HUMAN_ATTENTION`, `BLOCKED`, `REPLAN_REQUIRED`이면 검증 명령 대신 멈추고 사람에게 넘기라는 문장을 낸다.
+- 활성 실행이 없으면 세션을 시작할 때만 한 줄로 `start` 명령과 계약 승인은 사용자가 한다는 점을 알리고, 그 뒤 프롬프트에서는 아무것도 내지 않는다.
+- 체크포인트와 계약 파일만 읽고 저장소 전체를 해시하지 않으므로 큰 저장소에서도 프롬프트를 늦추지 않는다. 훅이 실패하면 아무것도 출력하지 않고 종료 코드 0으로 끝난다.
+- 범위 가드와 같은 방식으로 프로젝트 설정에만 등록하며(`--skip-claude-hooks`로 둘 다 생략), `doctor --host claude --repo <repo>`가 빠진 등록을 `CLAUDE_STATUS_HOOK_MISSING`으로 알린다.
+- 한계: 이 훅은 알려 줄 뿐 막지 않는다. 쓰기를 막는 것은 범위 가드이고, 판정은 `verify`가 한다. 저장소를 CraftHelm 대상으로 보는 기준은 `.crafthelm` 아래에 `config.json`, `contracts`, `runs` 중 하나가 있는 것이다. 승인자 키만 둔 홈 디렉터리의 `.crafthelm`은 대상이 아니다.
 
 ## 외부 Skill 감사 파이프라인
 

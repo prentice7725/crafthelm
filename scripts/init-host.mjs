@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeHostId } from '../hosts/registry.mjs';
 import { SKILL_MODULES, renderHostSkillMarkdown } from './install-skills.mjs';
-import { applyClaudeScopeHook } from './lib/claude-hooks.mjs';
+import { applyClaudeScopeHook, applyClaudeStatusHook } from './lib/claude-hooks.mjs';
 import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { collectRelativeFiles } from './lib/crypto.mjs';
@@ -76,6 +76,7 @@ export function initHost(options = {}) {
   const skipped = [];
   let claudePermissions = null;
   let claudeScopeHook = null;
+  let claudeStatusHook = null;
 
   const universalKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'universal', 'skills', 'kouetsu');
   const codexKouetsuDir = path.join(CRAFTHELM_ROOT, 'hosts', 'codex', 'skills', 'kouetsu');
@@ -112,6 +113,7 @@ export function initHost(options = {}) {
       ...(options.testCommandTemplate ? { test_command_template: options.testCommandTemplate } : {}),
       ...(options.customAnalyzer ? { custom_impact_analyzer: options.customAnalyzer } : {}),
     },
+    ...(options.requireRun ? { require_run_for_edits: true } : {}),
     model_routing: {
       enabled: true,
       escalate_on_retry: 2,
@@ -180,6 +182,11 @@ export function initHost(options = {}) {
       if (['ADDED', 'UPDATED'].includes(claudeScopeHook.action) && !written.includes(claudeScopeHook.settings_path)) {
         written.push(claudeScopeHook.settings_path);
       }
+      // The status hook repeats the open run and its scope on every turn; a skill is only read once.
+      claudeStatusHook = applyClaudeStatusHook({ settingsPath: path.join(repoRoot, '.claude', 'settings.json') });
+      if (['ADDED', 'UPDATED'].includes(claudeStatusHook.action) && !written.includes(claudeStatusHook.settings_path)) {
+        written.push(claudeStatusHook.settings_path);
+      }
     }
   }
 
@@ -210,6 +217,7 @@ export function initHost(options = {}) {
     skipped,
     ...(claudePermissions ? { claude_permissions: claudePermissions } : {}),
     ...(claudeScopeHook ? { claude_scope_hook: claudeScopeHook } : {}),
+    ...(claudeStatusHook ? { claude_status_hook: claudeStatusHook } : {}),
   };
 }
 
@@ -218,7 +226,7 @@ function printUsage() {
     [
       'CraftHelm Host Initializer CLI',
       '',
-      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--skip-claude-permissions] [--skip-claude-hooks] [--force]',
+      'Usage: init-host.mjs [--repo .] [--host generic|claude|codex|antigravity|gemini|custom|all] [--cli "<cmd>"] [--lightweight-model <m>] [--standard-model <m>] [--reasoning-model <m>] [--supports-multi-model] [--test-command-template "<tpl>"] [--custom-analyzer "<cmd>"] [--skip-claude-permissions] [--skip-claude-hooks] [--require-run] [--force]',
       '',
       'With --host claude|all, approval guard rules are merged into <repo>/.claude/settings.json (added, never removed).',
       '',
@@ -247,6 +255,7 @@ if (isMainModule(import.meta.url)) {
       force: Boolean(args.force),
       skipClaudePermissions: Boolean(args['skip-claude-permissions']),
       skipClaudeHooks: Boolean(args['skip-claude-hooks']),
+      requireRun: Boolean(args['require-run']),
     });
     process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
   } catch (err) {

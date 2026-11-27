@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
-import { applyClaudeScopeHook } from './lib/claude-hooks.mjs';
+import { applyClaudeScopeHook, applyClaudeStatusHook } from './lib/claude-hooks.mjs';
 import { applyClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { sha256Text } from './lib/crypto.mjs';
 import { CRAFTHELM_ROOT, toPosixPath } from './lib/paths.mjs';
@@ -95,10 +95,12 @@ export function renderHostSkillMarkdown(hostProfile = 'generic', crafthelmRoot =
     '',
     `1. **Doctor & Bootstrap:** Run \`${cliCmd} doctor --host ${meta.doctorHost} --json\` and \`${cliCmd} init-host --repo . --host ${meta.initHost}\` if \`.crafthelm/config.json\` is missing.`,
     `2. **Source-First Interview:** Read target SOT files first, then run \`${cliCmd} interview --repo . --task-id <ID> --request "<task>" --host ${meta.initHost}\`. Never guess unresolved \`BLOCKER\`s.`,
-    `3. **Contract, Skills Lock & Checkpoint:** Approve the contract (\`contract approve\`), lock skills (\`skills lock --repo . --host ${meta.initHost}\`), and initialize checkpoint (\`checkpoint init\`).`,
-    `4. **Cost-Aware Routing & Scoped Implementation:** Acquire single-writer lock (\`checkpoint acquire-lock\`), pick tier with \`${cliCmd} route --task-type <type> --host ${meta.routeHost} --repo . --json\`, edit strictly inside \`scope.allow\`, and release the writer lock.`,
+    `3. **Skills Lock, Contract Approval & Checkpoint:** Lock skills with \`${cliCmd} skills lock --repo . --host ${meta.initHost}\`. Approving the contract is the user's decision, not yours: show them the scope and the acceptance checks in \`.crafthelm/contracts/<ID>.json\` and wait for an explicit go-ahead in the conversation. Then run \`${cliCmd} contract approve .crafthelm/contracts/<ID>.json --actor <name the user gave> --init-run --repo . --run-id <RUN>\`. \`--init-run\` also freezes the run baseline; without it, run \`${cliCmd} checkpoint init --repo . --contract .crafthelm/contracts/<ID>.json --run-id <RUN>\`. If code for this task was already committed before the run was opened, add \`--baseline-ref <commit before that work>\` so it is verified too. An approval made from an agent session is recorded as such.`,
+    `4. **Cost-Aware Routing & Scoped Implementation:** Acquire the single-writer lock (\`${cliCmd} checkpoint acquire-lock --repo . --run-id <RUN> --writer <id>\`), pick tier with \`${cliCmd} route --task-type <type> --host ${meta.routeHost} --repo . --json\`, edit strictly inside \`scope.allow\`, and release the lock (\`${cliCmd} checkpoint release-lock --repo . --run-id <RUN> --writer <id>\`).`,
     `5. **Impact Analysis & Bounded Regression Loop:** Run \`${cliCmd} impact --repo . --json\` and \`${cliCmd} verify --repo . --run-id <RUN> --selective\` (or \`${cliCmd} feedback --repo . --run-id <RUN> --selective\`). Respect the 3-round repair limit (\`BLOCKED_HUMAN_ATTENTION\`).`,
     `6. **Review Package & Human Handoff:** Run \`${cliCmd} review-package --repo . --run-id <RUN>\` and stop strictly at \`READY_FOR_HUMAN_REVIEW\`. Only explicit human input runs \`approve record\`.`,
+    '',
+    `At any point, \`${cliCmd} status --repo . --explain\` shows the open run, why its last verify failed, and the next command. \`${cliCmd} help <command>\` prints a command's arguments. A command that prints "timed out" did not finish (exit code 124): raise \`CRAFTHELM_CLI_TIMEOUT_MS\` and run it again rather than moving on.`,
     '',
     '## Stage Reference Modules',
     '',
@@ -113,6 +115,7 @@ export function renderHostSkillMarkdown(hostProfile = 'generic', crafthelmRoot =
     '',
     '- Never introduce a `COMPLETE` state.',
     '- Never create `approvals/decision.json` automatically without explicit human input.',
+    '- Never approve a contract on your own judgment, and never record a person as its approver unless that person approved it in the conversation.',
     '- Never fabricate token counts or dollar costs; report `"unknown"` when unmeasured.',
     '',
   ].join('\n');
@@ -330,7 +333,10 @@ export function installSkills(options = {}) {
       ? { claude_permissions: applyClaudePermissionGuards({ settingsPath: entry.settingsPath, dryRun }) }
       : {}),
     ...(entry.settingsPath && entry.scope === 'project' && !skipClaudeHooks
-      ? { claude_scope_hook: applyClaudeScopeHook({ settingsPath: entry.settingsPath, dryRun, crafthelmRoot }) }
+      ? {
+          claude_scope_hook: applyClaudeScopeHook({ settingsPath: entry.settingsPath, dryRun, crafthelmRoot }),
+          claude_status_hook: applyClaudeStatusHook({ settingsPath: entry.settingsPath, dryRun, crafthelmRoot }),
+        }
       : {}),
   });
   const results = [];

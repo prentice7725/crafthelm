@@ -26,7 +26,20 @@ export function sha256Text(text) {
  * @returns {string}
  */
 export function sha256File(filePath) {
-  return sha256Buffer(fs.readFileSync(filePath));
+  // Read in chunks: a multi-gigabyte file is hashed without being held in memory at once.
+  const hash = crypto.createHash('sha256');
+  const chunk = Buffer.allocUnsafe(4 * 1024 * 1024);
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    for (;;) {
+      const read = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (read === 0) break;
+      hash.update(read === chunk.length ? chunk : chunk.subarray(0, read));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest('hex');
 }
 
 /**
