@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { readClaudeSettings } from './claude-permissions.mjs';
+import { getClaudeGuardRules, readClaudeSettings } from './claude-permissions.mjs';
+import { sha256CanonicalJson } from './crypto.mjs';
 import { CRAFTHELM_ROOT, toPosixPath } from './paths.mjs';
 import { writeAtomic } from './task-artifacts.mjs';
 
@@ -154,4 +155,62 @@ export function inspectClaudeStatusHook(options) {
  */
 export function applyClaudeStatusHook(options) {
   return applyHook('session_status', options);
+}
+
+// A settings object with CraftHelm's own guards taken out: the guard rules as the example file
+// spells them, and hook entries that are exactly what this checkout registers, in a group that
+// carries nothing else. Anything that only resembles a guard stays, and so shows up as a difference.
+function withoutCraftHelmGuards(settings, crafthelmRoot) {
+  const guards = getClaudeGuardRules();
+  const out = structuredClone(settings ?? {});
+  const found = { ask: [], deny: [], hooks: [] };
+  if (out.permissions && typeof out.permissions === 'object' && !Array.isArray(out.permissions)) {
+    for (const list of ['ask', 'deny']) {
+      if (!Array.isArray(out.permissions[list])) continue;
+      found[list] = out.permissions[list].filter((rule) => guards[list].includes(rule));
+      out.permissions[list] = out.permissions[list].filter((rule) => !guards[list].includes(rule));
+      if (out.permissions[list].length === 0) delete out.permissions[list];
+    }
+    if (Object.keys(out.permissions).length === 0) delete out.permissions;
+  }
+  if (out.hooks && typeof out.hooks === 'object' && !Array.isArray(out.hooks)) {
+    for (const { marker, events } of Object.values(HOOKS)) {
+      const command = hookCommand(marker, crafthelmRoot);
+      for (const { event, matcher } of events) {
+        if (!Array.isArray(out.hooks[event])) continue;
+        out.hooks[event] = out.hooks[event].filter((group) => {
+          const ours = group && typeof group === 'object'
+            && Object.keys(group).sort().join(',') === (matcher ? 'hooks,matcher' : 'hooks')
+            && (matcher ? group.matcher === matcher : true)
+            && Array.isArray(group.hooks) && group.hooks.length === 1
+            && sha256CanonicalJson(group.hooks[0]) === sha256CanonicalJson({ type: 'command', command });
+          if (ours) found.hooks.push(`${event}:${marker}`);
+          return !ours;
+        });
+        if (out.hooks[event].length === 0) delete out.hooks[event];
+      }
+    }
+    if (Object.keys(out.hooks).length === 0) delete out.hooks;
+  }
+  return { rest: out, found };
+}
+
+/**
+ * True when `current` is `baseline` with CraftHelm guards added and nothing else changed: no guard
+ * the baseline had is missing, and every other key, rule and hook is the same. This is what
+ * `init-host --host claude` or `install-skills` does to a project's settings when a newer checkout
+ * has more guard rules. Only additions pass, since a guard can only narrow what a session may do.
+ * @param {object|null} baseline
+ * @param {object|null} current
+ * @param {{ crafthelmRoot?: string }} [options]
+ * @returns {boolean}
+ */
+export function isOnlyClaudeGuardAddition(baseline, current, options = {}) {
+  if (!baseline || !current || typeof baseline !== 'object' || typeof current !== 'object') return false;
+  const before = withoutCraftHelmGuards(baseline, options.crafthelmRoot);
+  const after = withoutCraftHelmGuards(current, options.crafthelmRoot);
+  if (sha256CanonicalJson(before.rest) !== sha256CanonicalJson(after.rest)) return false;
+  const kept = ['ask', 'deny', 'hooks'].every((kind) => before.found[kind].every((item) => after.found[kind].includes(item)));
+  const grew = ['ask', 'deny', 'hooks'].some((kind) => after.found[kind].length > before.found[kind].length);
+  return kept && grew;
 }

@@ -783,7 +783,7 @@ export function replanRun(options) {
 // contract. A person may move their baseline forward after updating the tooling mid-run.
 const TOOLING_BASELINE_FILES = ['.crafthelm/config.json', '.crafthelm/skills.lock.json', 'GEMINI.md', '.claude/settings.json'];
 const TOOLING_BASELINE_DIRS = ['.agents/skills/', '.claude/skills/', '.codex/skills/', '.gemini/skills/'];
-const isToolingBaselineFile = (rel) => TOOLING_BASELINE_FILES.includes(rel) || TOOLING_BASELINE_DIRS.some((dir) => rel.startsWith(dir));
+export const isToolingBaselineFile = (rel) => TOOLING_BASELINE_FILES.includes(rel) || TOOLING_BASELINE_DIRS.some((dir) => rel.startsWith(dir));
 
 /**
  * Re-freeze the baseline hashes of tooling files (skill installs, skills lock, CraftHelm config,

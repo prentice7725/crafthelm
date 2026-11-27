@@ -159,8 +159,9 @@ describe('Scope across runs: a file in another run\'s scope is still reported, a
       write(repo, 'notes.txt', 'stray\n');
       const again = runVerify({ repo, runId: first });
       assert.equal(again.scope_status, 'FAIL');
-      const reason = again.failure_reasons.find((r) => r.startsWith('SCOPE_VIOLATION'));
-      assert.match(reason, /^SCOPE_VIOLATION: Out-of-scope file changes: notes\.txt, src\/b\/two\.mjs \(inside the scope of other open runs: B-RUN: src\/b\/two\.mjs\. If that work changed them after this run's baseline, this run cannot pass on this tree: decide it before the next run starts, or close it\.\)$/);
+      // The violation line stays a plain file list; the note is a line of its own.
+      assert.ok(again.failure_reasons.includes('SCOPE_VIOLATION: Out-of-scope file changes: notes.txt, src/b/two.mjs'));
+      assert.ok(again.failure_reasons.includes("SCOPE_NOTE: The files are inside the scope of other open runs: B-RUN: src/b/two.mjs. If that work changed them after this run's baseline, this run cannot pass on this tree: decide it before the next run starts, or close it."));
       assert.ok(second);
     } finally {
       remove(repo);

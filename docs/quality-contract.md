@@ -157,4 +157,11 @@ Diff hunk와 다언어(JS/TS, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby, P
 - 대기 중인 실행이 보호하던 경로를 다른 실행이 고치면 그 실행의 스냅샷은 달라진다. 수용하려면 다시 검증해야 하고, 그때 보호 경로 변경이 `PROTECTED_PATH_VIOLATION`으로 보고된다. 가드가 막지 않을 뿐 `verify`의 판정은 바뀌지 않았다.
 - 선택적 회귀에서 검사를 건너뛴다는 것은 앞선 통과 결과를 그대로 쓴다는 뜻이다. 이 실행에서 같은 명령으로 통과한 기록(검증 이력이나 `--record-baseline-green`)이 없는 검사는 건너뛰지 않고 실행하며, 선택 사유는 `no_earlier_pass_in_this_run`이다. 그러지 않으면 한 번도 실행되지 않은 검사가 유일한 수용 기준인 요구가 `VERIFIED`로 보고된다.
 - 영향도 분석이 읽지 못하는 데이터 파일(`.json`, `.jsonc`, `.json5`, `.jsonl`, `.xml`, `.xsd`, `.avsc`)이 바뀌면 전체 실행으로 대체한다(`UNPARSED_SOURCE_CHANGED`). 스키마나 설정을 읽는 테스트와 그 파일을 정적으로 연결할 수 없기 때문이다.
-- `verify`의 변경 파일은 실행의 기준선부터 지금 트리까지다. 그사이 다른 계약으로 진행한 작업도 여기에 잡히며, 이 실행의 범위 밖이면 `SCOPE_VIOLATION`이다. 다른 실행의 범위는 어떤 경로도 면제하지 않는다. 대신 사유에 그 파일이 어느 실행의 범위 안인지를 적는다. 한 실행을 결정하기 전에 다음 실행을 시작하면 앞선 실행은 이 트리에서 다시 통과할 수 없다.
+- `verify`의 변경 파일은 실행의 기준선부터 지금 트리까지다. 그사이 다른 계약으로 진행한 작업도 여기에 잡히며, 이 실행의 범위 밖이면 `SCOPE_VIOLATION`이다. 다른 실행의 범위는 어떤 경로도 면제하지 않는다. 대신 `SCOPE_VIOLATION` 다음 줄에 `SCOPE_NOTE`로 그 파일이 어느 실행의 범위 안인지를 적는다. `SCOPE_VIOLATION` 줄 자체는 파일 목록만 담는다. 한 실행을 결정하기 전에 다음 실행을 시작하면 앞선 실행은 이 트리에서 다시 통과할 수 없다.
+
+### 23. 실행 도중 재설치로 추가된 권한 규칙 (`scripts/verify.mjs`, `scripts/lib/claude-hooks.mjs`)
+
+- 실행 도중 CraftHelm을 다시 설치하면 새 명령의 권한 규칙과 훅이 `.claude/settings.json`에 추가된다. 기준선과의 차이가 CraftHelm 가드의 추가뿐이면 `verify`는 이 파일을 실행의 변경으로 세지 않는다. 스킬 사본을 그대로 재설치한 경우와 같은 취급이다.
+- 가드는 `hosts/claude/settings.example.json`에 적힌 그대로의 규칙과, 이 체크아웃이 등록하는 그대로의 훅 항목만 인정한다. 추가만 면제한다. 기준선에 있던 가드가 빠졌거나, 다른 규칙이나 키가 달라졌거나, 가드 스크립트 이름만 포함한 다른 명령이 들어가면 전과 같이 `SCOPE_VIOLATION`이다.
+- 비교하려면 기준선 내용이 필요하다. 기준선 커밋에 `.claude/settings.json`이 들어 있고 그 해시가 체크포인트에 동결된 값과 같을 때만 면제한다. 커밋된 적이 없거나 `checkpoint rebaseline`으로 기준선을 옮긴 뒤에는 면제하지 않는다. 계약이 이 파일을 `scope.protect`에 넣었을 때도 면제하지 않는다.
+- 범위 밖 변경이 모두 도구 파일(`checkpoint rebaseline`이 다루는 파일)일 때는 `SCOPE_VIOLATION` 다음 줄에 `SCOPE_NOTE`로 그 사실과 `checkpoint rebaseline` 명령을 적는다. 과제가 만든 변경이 아니라 도구를 갱신해서 생긴 차이임을 구분하기 위해서다.
