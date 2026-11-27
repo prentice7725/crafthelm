@@ -155,14 +155,14 @@ function parsePropertyEvidence(stdout, stderr) {
   return { seed, counterexample };
 }
 
-function evaluateDifferential(ac, cmdResult, repoRoot) {
+function evaluateDifferential(ac, cmdResult, repoRoot, timeoutMs) {
   let baselineOutput = ac.baseline ?? '';
   if (ac.baseline_command) {
-    const baseRes = runShellCommand(ac.baseline_command, { cwd: repoRoot });
+    const baseRes = runShellCommand(ac.baseline_command, { cwd: repoRoot, timeoutMs });
     if (baseRes.exitCode !== 0) {
       return {
         passed: false,
-        reason: `Baseline command failed with exit ${baseRes.exitCode}`,
+        reason: baseRes.timedOut ? `Baseline command timed out after ${baseRes.timeoutMs} ms` : `Baseline command failed with exit ${baseRes.exitCode}`,
         diffs: [{ type: 'baseline_error', detail: baseRes.stderr || baseRes.stdout }],
       };
     }
@@ -307,10 +307,26 @@ function readErrorExcerpt(runDir, stdoutFile, stderrFile) {
   return parts.join('\n').slice(0, 400);
 }
 
+// A check with no limit of its own gets this one. It is a guard against a hung command, so it is
+// generous: an end-to-end smoke test that takes a few minutes is ordinary.
+export const DEFAULT_CHECK_TIMEOUT_MS = 600_000;
+
+/** Time limit of one acceptance command: its own `timeout_ms`, else the contract-wide one, else the default. */
+export function resolveCheckTimeoutMs(ac, contract) {
+  return ac?.timeout_ms ?? contract?.verification_policy?.check_timeout_ms ?? DEFAULT_CHECK_TIMEOUT_MS;
+}
+
+function describeTimeout(res) {
+  return `Timed out: stopped after ${res.timeoutMs} ms without finishing. Raise timeout_ms on this acceptance item (or verification_policy.check_timeout_ms) if the command needs longer`;
+}
+
 function classifyFailureCauseCategory(failureReasons) {
   const joined = failureReasons.join(' ');
   if (joined.includes('SCOPE_VIOLATION')) return 'SCOPE_VIOLATION';
   if (joined.includes('PROTECTED_PATH_VIOLATION')) return 'PROTECTED_PATH_VIOLATION';
+  // A run whose only failed checks ran out of time has not been shown to be wrong. It is counted
+  // apart, so it does not use up the repair rounds of a test or E2E failure.
+  if (joined.includes('AC_TIMEOUT:') && !joined.includes('AC_FAILED:') && !joined.includes('E2E_MISSING')) return 'CHECK_TIMEOUT';
   if (joined.includes('E2E_FAILED') || joined.includes('E2E_MISSING')) return 'E2E_FAILURE';
   if (joined.includes('LITE_PROFILE_EXCEEDED')) return 'LITE_PROFILE_EXCEEDED';
   if (joined.includes('RELIABILITY_ENFORCE_FAILED')) return 'RELIABILITY_RULE_FAILURE';
@@ -335,7 +351,7 @@ export function recordRedEvidence(options) {
     throw new Error(`Executable AC "${acId}" not found in contract`);
   }
 
-  const res = runShellCommand(ac.command, { cwd: repoRoot });
+  const res = runShellCommand(ac.command, { cwd: repoRoot, timeoutMs: resolveCheckTimeoutMs(ac, contract) });
   const expectedExit = ac.expected_exit_code ?? 0;
   const testsDir = path.join(getRunDir(repoRoot, runId), 'evidence', 'tests');
   fs.mkdirSync(testsDir, { recursive: true });
@@ -344,6 +360,10 @@ export function recordRedEvidence(options) {
   storeCommandOutput(getRunDir(repoRoot, runId), stdoutRel, res.stdout);
   storeCommandOutput(getRunDir(repoRoot, runId), stderrRel, res.stderr);
 
+  if (res.timedOut) {
+    // A command that never finished did not fail the way the missing behaviour would make it fail.
+    return { ok: false, error_code: 'RED_TIMEOUT', message: `AC "${acId}": ${describeTimeout(res)}.` };
+  }
   if (res.exitCode === expectedExit) {
     return {
       ok: false,
@@ -384,7 +404,7 @@ export function recordBaselineGreen(options) {
     throw new Error(`Executable AC "${acId}" not found in contract`);
   }
 
-  const res = runShellCommand(ac.command, { cwd: repoRoot });
+  const res = runShellCommand(ac.command, { cwd: repoRoot, timeoutMs: resolveCheckTimeoutMs(ac, contract) });
   const expectedExit = ac.expected_exit_code ?? 0;
   const testsDir = path.join(getRunDir(repoRoot, runId), 'evidence', 'tests');
   fs.mkdirSync(testsDir, { recursive: true });
@@ -397,7 +417,7 @@ export function recordBaselineGreen(options) {
     return {
       ok: false,
       error_code: 'BASELINE_GREEN_FAILED',
-      message: `Baseline check "${acId}" failed (exit ${res.exitCode}) before refactoring`,
+      message: res.timedOut ? `Baseline check "${acId}": ${describeTimeout(res)}.` : `Baseline check "${acId}" failed (exit ${res.exitCode}) before refactoring`,
     };
   }
 
@@ -572,7 +592,8 @@ export function runVerify(options) {
       process.stderr.write(`[verify] Running ${ac.id} (${ac.kind}): ${ac.command}\n`);
     }
     const startedAt = new Date().toISOString();
-    const res = runShellCommand(ac.command, { cwd: repoRoot });
+    const checkTimeoutMs = resolveCheckTimeoutMs(ac, contract);
+    const res = runShellCommand(ac.command, { cwd: repoRoot, timeoutMs: checkTimeoutMs });
     const stdoutRel = `evidence/tests/${ac.id}.stdout.txt`;
     const stderrRel = `evidence/tests/${ac.id}.stderr.txt`;
     const storedOut = storeCommandOutput(runDir, stdoutRel, res.stdout);
@@ -582,16 +603,23 @@ export function runVerify(options) {
     const expectedExit = ac.expected_exit_code ?? 0;
     let status = res.exitCode === expectedExit ? 'PASS' : 'FAIL';
     let reason = status === 'PASS' ? 'Exit code matched expected' : `Expected exit ${expectedExit}, got ${res.exitCode}`;
+    if (res.timedOut) {
+      // Never a pass, whatever exit code the contract expects: the command did not finish.
+      status = 'FAIL';
+      reason = describeTimeout(res);
+    }
     let counterexampleFile;
     let seed = null;
     let diffReportFile;
 
+    let timedOut = res.timedOut === true;
     if (ac.require_red_first && !checkpoint.red_records?.[ac.id]) {
+      timedOut = false;
       status = 'FAIL';
       reason = 'RED-First evidence missing for AC requiring pre-implementation failure proof';
     }
 
-    if (ac.kind === 'property' && status === 'FAIL') {
+    if (ac.kind === 'property' && status === 'FAIL' && !res.timedOut) {
       const prop = parsePropertyEvidence(res.stdout, res.stderr);
       seed = prop.seed;
       counterexampleFile = `evidence/tests/${ac.id}.counterexample.json`;
@@ -606,7 +634,7 @@ export function runVerify(options) {
     }
 
     if (ac.kind === 'differential' && res.exitCode === expectedExit) {
-      const diffEval = evaluateDifferential(ac, res, repoRoot);
+      const diffEval = evaluateDifferential(ac, res, repoRoot, checkTimeoutMs);
       diffReportFile = `evidence/tests/${ac.id}.diff.json`;
       writeJson(path.join(runDir, diffReportFile), {
         ac_id: ac.id,
@@ -625,7 +653,7 @@ export function runVerify(options) {
       process.stderr.write(`[verify] ${ac.id} -> ${status} (${res.durationMs}ms)\n`);
     }
     if (status === 'FAIL') {
-      failureReasons.push(`AC_FAILED:${ac.id}: ${reason}`);
+      failureReasons.push(`${timedOut ? 'AC_TIMEOUT' : 'AC_FAILED'}:${ac.id}: ${reason}`);
     } else if (status === 'BLOCKED') {
       hasBlocked = true;
       failureReasons.push(`AC_BLOCKED:${ac.id}: ${reason}`);
@@ -640,6 +668,8 @@ export function runVerify(options) {
       status,
       reason,
       duration_ms: res.durationMs,
+      timeout_ms: checkTimeoutMs,
+      ...(res.timedOut ? { timed_out: true } : {}),
       started_at: startedAt,
       stdout_file: stdoutRel,
       stderr_file: stderrRel,
@@ -695,7 +725,7 @@ export function runVerify(options) {
 
     let ruleRes = { exitCode: 0, stdout: 'Rule command not specified; marked observed', stderr: '' };
     if (rule.check.command) {
-      ruleRes = runShellCommand(rule.check.command, { cwd: repoRoot });
+      ruleRes = runShellCommand(rule.check.command, { cwd: repoRoot, timeoutMs: resolveCheckTimeoutMs(null, contract) });
     }
     const evidenceRel = `evidence/rules/${rule.id}.json`;
     const passed = ruleRes.exitCode === 0;
@@ -781,7 +811,7 @@ export function runVerify(options) {
         sourceFiles: assessEvidenceStrength({ contract, checks, impact, changedFiles }).changed_source_files,
         commands: checks
           .filter((c) => c.status === 'PASS' && c.command && probeKinds.has(c.kind))
-          .map((c) => ({ id: c.id, command: c.command, expected_exit_code: acById.get(c.id)?.expected_exit_code ?? 0 })),
+          .map((c) => ({ id: c.id, command: c.command, expected_exit_code: acById.get(c.id)?.expected_exit_code ?? 0, timeout_ms: resolveCheckTimeoutMs(acById.get(c.id), contract) })),
         maxMutants: options.maxMutants ?? contract.verification_policy?.mutation_probe_max_mutants,
       });
       if (options.progress) {

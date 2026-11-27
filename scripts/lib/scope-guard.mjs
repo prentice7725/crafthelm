@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CRAFTHELM_ROOT, getContractPath, matchesAnyGlob, toPosixPath } from './paths.mjs';
 import { STATES } from './state-machine.mjs';
+import { readWriterLock } from './writer-lock.mjs';
 
 /**
  * Scope guard: decide, before a file is written, whether the active execution contract allows it.
@@ -16,8 +17,10 @@ import { STATES } from './state-machine.mjs';
  * an agent is meant to author there, and the files that decide what the agent may do (contracts and
  * the Claude settings that hold the permission rules and this hook).
  *
- * It is a seatbelt, not the control. It sees the host's file tools only, not a shell redirect or a
- * script that writes files, and a broken guard allows the write. `verify` remains the check that counts.
+ * It is a seatbelt, not the control. It sees the host's file tools only, not a shell redirect,
+ * `sed -i` or a script that writes files (a shell command line cannot be read reliably for the
+ * paths it will write), and a broken guard allows the write. `verify` remains the check that counts:
+ * it compares the whole tree with the baseline, however a file was changed.
  */
 
 const ENDED_STATES = new Set([STATES.ACCEPTED, STATES.REJECTED, STATES.CLOSED_UNACCEPTED, STATES.ABORTED]);
@@ -235,12 +238,41 @@ export function describeSessionStatus(params) {
     const required = readJsonSafe(path.join(repoRoot, '.crafthelm', 'config.json'))?.require_run_for_edits === true;
     return `CraftHelm: this repository uses CraftHelm and no run is in progress.${required ? ' File edits are blocked until one is open.' : ''} Before changing code, start one with: ${cli} start "<task>" ${repoFlag}. The user approves the contract; you do not.`;
   }
-  const lines = [];
-  for (const run of scopes) {
-    lines.push(`CraftHelm: run ${run.run_id} (task ${run.task_id}) is ${run.state}.`);
-    lines.push(`  Write only inside scope.allow: ${run.allow.join(', ') || '(nothing)'}.${run.protect.length > 0 ? ` Never inside scope.protect: ${run.protect.join(', ')}.` : ''}`);
-    lines.push(`  ${WAITING_ON_A_PERSON[run.state] ?? `After editing, verify with: ${cli} verify ${repoFlag} --run-id ${run.run_id} --selective`}`);
-    lines.push(`  What failed and what is next: ${cli} status ${repoFlag} --run-id ${run.run_id} --explain`);
+  // This text is added to every turn, so it stays short: the runs that can be worked on are spelled
+  // out, and the ones waiting on a person share one line. Spelling out each waiting run would also
+  // tell the agent "do not edit files" next to an open run that says where to edit.
+  const open = scopes.filter((run) => !WAITING_ON_A_PERSON[run.state]);
+  const waiting = scopes.filter((run) => WAITING_ON_A_PERSON[run.state]);
+  const describe = (run) => {
+    const lock = WAITING_ON_A_PERSON[run.state] ? null : readWriterLock(repoRoot, run.run_id);
+    const writerFlag = lock?.writer_id ? ` --writer ${lock.writer_id}` : '';
+    const out = [
+      `CraftHelm: run ${run.run_id} (task ${run.task_id}) is ${run.state}.`,
+      `  Write only inside scope.allow: ${run.allow.join(', ') || '(nothing)'}.${run.protect.length > 0 ? ` Never inside scope.protect: ${run.protect.join(', ')}.` : ''}`,
+      `  ${WAITING_ON_A_PERSON[run.state] ?? `After editing, verify with: ${cli} verify ${repoFlag} --run-id ${run.run_id} --selective${writerFlag}`}`,
+    ];
+    if (lock?.writer_id) {
+      out.push(`  Writer lock held by "${lock.writer_id}": verify, feedback and checkpoint commands on this run need --writer ${lock.writer_id}. Release it when the edits are done.`);
+    } else if (lock) {
+      out.push(`  A writer lock without a readable owner is on this run; commands will stop with CONCURRENT_WRITER_BLOCKED until a person clears it.`);
+    }
+    out.push(`  What failed and what is next: ${cli} status ${repoFlag} --run-id ${run.run_id} --explain`);
+    return out;
+  };
+  if (open.length === 0 && waiting.length === 1) return describe(waiting[0]).join('\n');
+
+  const lines = open.flatMap(describe);
+  if (waiting.length > 0) {
+    const MAX_LISTED = 6;
+    const listed = waiting.slice(0, MAX_LISTED).map((run) => `${run.run_id} (${run.state})`).join(', ');
+    const more = waiting.length > MAX_LISTED ? `, and ${waiting.length - MAX_LISTED} more` : '';
+    lines.push(
+      `CraftHelm: ${waiting.length} ${open.length > 0 ? 'other ' : ''}run${waiting.length === 1 ? ' waits' : 's wait'} on a person's decision: ${listed}${more}.`,
+      open.length > 0
+        ? '  Do not continue or re-verify them, and never record their decision yourself. This does not restrict the open run above.'
+        : '  Do not edit files for them or re-verify them, and never record their decision yourself. Report to the user; the next step is theirs.',
+      `  Details of one: ${cli} status ${repoFlag} --run-id <run> --explain`,
+    );
   }
   return lines.join('\n');
 }

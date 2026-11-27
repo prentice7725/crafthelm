@@ -160,6 +160,27 @@ function approveContract(absPath, actor, options) {
     throw new Error(`CONTRACT_POLICY_NOT_READY: ${details}`);
   }
 
+  // Approving an approved contract again as the same actor is a no-op. Rewriting the time would
+  // change the contract hash, and a run already opened on it would then demand a re-plan.
+  const trimmedActor = String(actor).trim();
+  const channel = options.channel ?? 'programmatic';
+  if (contract.approval?.contract_approved === true && contract.approval.contract_approved_by === trimmedActor
+    && (contract.approval.contract_approved_via ?? 'programmatic') === channel) {
+    return {
+      ok: true,
+      already_approved: true,
+      task_id: contract.task_id,
+      contract_path: absPath,
+      contract_sha256: sha256CanonicalJson(contract),
+      approved_by: contract.approval.contract_approved_by,
+      approved_at: contract.approval.contract_approved_at,
+      approved_via: contract.approval.contract_approved_via ?? 'programmatic',
+      policy_ready: readiness.policy_ready,
+      warnings: readiness.warnings,
+      note: 'This contract was already approved with this content; nothing was written. A changed request is not in it: rebuild the contract with interview --overwrite, or amend it with contract add-e2e / add-test, and approve the result.',
+    };
+  }
+
   contract.approval = {
     ...contract.approval,
     contract_approved: true,
@@ -264,6 +285,7 @@ function amendCheck(file, kind, command, options) {
     const ac = {
       id: `AC-${String(n).padStart(2, '0')}`, requirement: contract.acceptance[0].requirement,
       kind, command, expected_exit_code: 0,
+      ...(options.timeoutMs !== undefined ? { timeout_ms: options.timeoutMs } : {}),
     };
     contract.acceptance.push(ac);
     contract.approval = { require_on: contract.approval.require_on, contract_approved: false };
@@ -280,6 +302,13 @@ function amendCheck(file, kind, command, options) {
     ok: true, contract_path: file, task_id: contract.task_id, ...readiness,
     next_command: nextCommand,
   };
+}
+
+function parseTimeoutMs(raw) {
+  if (raw === undefined) return undefined;
+  const ms = Number(raw);
+  if (!Number.isInteger(ms) || ms < 1000) throw new Error(`--timeout-ms must be a whole number of milliseconds, at least 1000 (got "${raw}").`);
+  return ms;
 }
 
 function printUsage() {
@@ -338,10 +367,10 @@ if (isMainModule(import.meta.url)) {
       );
       process.exit(res.valid ? 0 : 1);
     } else if (subcommand === 'add-e2e') {
-      const res = addE2eCriterion(target, args['e2e-cmd'], { docsDir: args['docs-dir'] });
+      const res = addE2eCriterion(target, args['e2e-cmd'], { docsDir: args['docs-dir'], timeoutMs: parseTimeoutMs(args['timeout-ms']) });
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'add-test') {
-      const res = addTargetedTest(target, args['test-cmd'], { docsDir: args['docs-dir'] });
+      const res = addTargetedTest(target, args['test-cmd'], { docsDir: args['docs-dir'], timeoutMs: parseTimeoutMs(args['timeout-ms']) });
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'plan') {
       const res = planFromContract(target);
@@ -368,7 +397,9 @@ if (isMainModule(import.meta.url)) {
         res = approve();
       }
       for (const w of res.warnings ?? []) process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
-      if (channel === 'agent_session') {
+      if (res.already_approved) {
+        process.stderr.write(`[notice] Contract ${res.task_id} was already approved by "${res.approved_by}" at ${res.approved_at}, and its content is the same; nothing was written. If the request changed, this contract does not contain the change.\n`);
+      } else if (channel === 'agent_session') {
         // The name in --actor is whatever the caller typed; say plainly what the record will show.
         process.stderr.write(`[notice] This approval ran inside an AI agent session. It is recorded as contract_approved_via "agent_session" with actor "${String(args.actor).trim()}", and the review package shows that. Use a person's name only if that person approved this contract in the conversation.\n`);
       }

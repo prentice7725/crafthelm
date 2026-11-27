@@ -126,7 +126,7 @@ export function runInterview(options = {}) {
     status: 'TASK_EXISTS',
     task_id: taskId,
     contract_path: contractPath,
-    message: `Task contract "${taskId}" already exists. Pass --overwrite to update it or omit --task-id to create a new task.`,
+    message: `Task contract "${taskId}" already exists and was left as it is: nothing from this request or input file was applied. Pass --overwrite to rebuild it from this input, or omit --task-id to create a new task.`,
     artifacts_written: [],
   });
   if (fs.existsSync(contractPath) && !options.overwrite) return existingTask();

@@ -375,7 +375,7 @@ export function runMutationProbe(params) {
     try {
       fs.writeFileSync(abs, mutatedText, 'utf8');
       for (const cmd of params.commands) {
-        const res = runShellCommand(cmd.command, { cwd: params.repoRoot, timeoutMs: params.timeoutMs });
+        const res = runShellCommand(cmd.command, { cwd: params.repoRoot, timeoutMs: params.timeoutMs ?? cmd.timeout_ms });
         if (res.exitCode !== (cmd.expected_exit_code ?? 0)) {
           killedBy = cmd.id;
           break;
