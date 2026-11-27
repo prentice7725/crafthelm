@@ -131,3 +131,12 @@ Diff hunk와 다언어(JS/TS, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby, P
 - 그 결과 검증 뒤 승인 전에 무시 파일이 바뀌어도 `STALE`이 되지 않는다. 바뀌면 안 되는 경로는 git이 무시하더라도 계약의 `scope.protect`에 적는다. 보호 경로는 실행을 열 때 따로 해시하고 `verify`와 `checkpoint resume`에서 대조한다.
 - git 저장소가 아닌 디렉터리에서는 전과 같이 모든 파일을 훑는다. `.crafthelm/runs/`, `.git/`, `node_modules/`는 어느 경우에도 제외한다.
 - 이 변경 전에 계산한 스냅샷 값은 무시 파일이 있던 저장소에서 지금 값과 다르다. 진행 중이거나 승인 대기 중인 실행은 `verify`를 다시 실행해야 한다.
+
+### 20. 스킬 사본의 관리 표시와 실행 초기화 순서 (`scripts/install-skills.mjs`, `scripts/init-host.mjs`, `scripts/checkpoint.mjs`)
+
+- `init-host`가 대상 저장소에 쓰는 스킬 사본(`.claude/skills/crafthelm` 등)에도 `install-skills`와 같은 설치 매니페스트(`.crafthelm-skill-install.json`)를 남긴다. 매니페스트가 있는 사본은 `install-skills --scope project`와 `init-host` 재실행이 `--force` 없이 갱신한다.
+- 매니페스트가 없는 사본은 사용자가 직접 둔 것일 수 있으므로 전과 같이 건드리지 않는다(`SKIPPED_UNMANAGED`). 매니페스트를 남기기 전의 `init-host`가 만든 사본이 이 상태다. `--force`로 한 번 덮어쓰면 그 뒤로는 관리 대상이 된다.
+- `doctor`는 매니페스트가 없고 내용이 현재 체크아웃과 다른 사본을 `CLAUDE_SKILL_UNMANAGED`로 경고한다. 프로젝트 사본은 사용자 범위 사본 대신 읽히므로, 사용자 범위만 갱신하면 에이전트는 예전 절차를 읽는다. `doctor`가 내는 수정 명령은 대상 저장소에서 그대로 실행할 수 있는 디스패처 경로다.
+- 여러 호스트가 함께 쓰는 `.agents/skills/crafthelm`은 처음 쓴 호스트 프로필을 매니페스트에 적어 두고, 이후 갱신과 상태 점검은 그 프로필을 기준으로 한다. 프로필을 바꾸려면 `--force`를 쓴다.
+- 실행 폴더(`approvals/`, `evidence/`, `reports/`)는 기준선 해시 계산이 끝난 뒤 `checkpoint.json`과 함께 만든다. 계산 도중 명령이 중단되어도 체크포인트 없는 실행 폴더가 남지 않는다.
+- `contract approve --init-run`이 승인을 기록한 뒤 실행을 열기 전에 중단되면 승인만 남는다. 같은 명령을 다시 실행하면 승인은 그대로 두고 실행만 연다. 이때 알림은 "아무것도 쓰지 않았다"가 아니라 실행을 열었다고 적는다.

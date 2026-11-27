@@ -409,7 +409,10 @@ if (isMainModule(import.meta.url)) {
       }
       for (const w of res.warnings ?? []) process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
       if (res.already_approved) {
-        process.stderr.write(`[notice] Contract ${res.task_id} was already approved by "${res.approved_by}" at ${res.approved_at}, and its content is the same; nothing was written. If the request changed, this contract does not contain the change.\n`);
+        // With --init-run this is also how an approval whose run was never opened (the command was
+        // stopped in between) is finished: the approval stands and only the run is created.
+        const wrote = res.run?.initialized ? `the approval was left as it is and run ${res.run.run_id} was opened` : 'nothing was written';
+        process.stderr.write(`[notice] Contract ${res.task_id} was already approved by "${res.approved_by}" at ${res.approved_at}, and its content is the same; ${wrote}. If the request changed, this contract does not contain the change.\n`);
       } else if (channel === 'agent_session') {
         // The name in --actor is whatever the caller typed; say plainly what the record will show.
         process.stderr.write(`[notice] This approval ran inside an AI agent session. It is recorded as contract_approved_via "agent_session" with actor "${String(args.actor).trim()}", and the review package shows that. Use a person's name only if that person approved this contract in the conversation.\n`);

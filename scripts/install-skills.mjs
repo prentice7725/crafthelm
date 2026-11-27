@@ -285,6 +285,54 @@ function readInstallManifest(skillDir) {
   }
 }
 
+const isManagedManifest = (manifest) => manifest?.managed_by === 'crafthelm';
+
+// A managed copy keeps the profile it was written with: `.agents/skills` is shared by several hosts,
+// and the target named on a later command line says where to write, not which wording to use.
+function profileOf(entry, manifest, force = false) {
+  return !force && isManagedManifest(manifest) && HOST_PROFILE_META[manifest.host_profile] ? manifest.host_profile : entry.hostProfile;
+}
+
+/** True when CraftHelm wrote the skill copy in `skillDir` and may update it without being asked. */
+export function isManagedSkillDir(skillDir) {
+  return isManagedManifest(readInstallManifest(skillDir));
+}
+
+/**
+ * Write a skill copy and the manifest that marks it as CraftHelm's. Every writer goes through here:
+ * a copy without the manifest is treated as someone else's and is never updated again.
+ * @param {string} skillDir
+ * @param {{ hostProfile: string, target: string, scope: string, crafthelmRoot?: string }} options
+ * @returns {{ skill_sha256: string, files: string[] }}
+ */
+export function writeManagedSkillPackage(skillDir, options) {
+  const crafthelmRoot = path.resolve(options.crafthelmRoot ?? CRAFTHELM_ROOT);
+  const filesMap = buildExpectedFilesMap(options.hostProfile, crafthelmRoot, crafthelmRoot);
+  const skillSha256 = computeSkillPayloadDigest(filesMap);
+  const files = [];
+  for (const [rel, content] of Object.entries(filesMap)) {
+    const dest = path.join(skillDir, rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, content.replace(/\r\n/g, '\n'), 'utf8');
+    files.push(dest);
+  }
+  const manifestObj = {
+    schema_version: '0.3',
+    managed_by: 'crafthelm',
+    skill_name: 'crafthelm',
+    target: options.target,
+    host_profile: options.hostProfile,
+    scope: options.scope,
+    crafthelm_root: toPosixPath(crafthelmRoot),
+    skill_sha256: skillSha256,
+    installed_at: new Date().toISOString(),
+  };
+  const manifestPath = path.join(skillDir, INSTALL_MANIFEST_NAME);
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifestObj, null, 2)}\n`, 'utf8');
+  files.push(manifestPath);
+  return { skill_sha256: skillSha256, files };
+}
+
 // Repository-relative homes of a project-scope CraftHelm skill install (see resolveSkillTargets).
 const PROJECT_SKILL_DIRS = Object.freeze([
   '.claude/skills/crafthelm',
@@ -395,11 +443,12 @@ export function installSkills(options = {}) {
   const results = [];
 
   for (const entry of targets) {
-    const filesMap = buildExpectedFilesMap(entry.hostProfile, crafthelmRoot, crafthelmRoot);
-    const skillSha256 = computeSkillPayloadDigest(filesMap);
     const exists = fs.existsSync(entry.skillDir);
     const existingManifest = exists ? readInstallManifest(entry.skillDir) : null;
-    const isManaged = existingManifest?.managed_by === 'crafthelm';
+    const isManaged = isManagedManifest(existingManifest);
+    const hostProfile = profileOf(entry, existingManifest, force);
+    const filesMap = buildExpectedFilesMap(hostProfile, crafthelmRoot, crafthelmRoot);
+    const skillSha256 = computeSkillPayloadDigest(filesMap);
 
     if (exists && !isManaged && !force) {
       results.push({
@@ -409,7 +458,7 @@ export function installSkills(options = {}) {
         skill_dir: entry.skillDir,
         action: 'SKIPPED_UNMANAGED',
         skill_sha256: skillSha256,
-        reason: 'Directory exists without CraftHelm install manifest (pass --force to overwrite)',
+        reason: 'Directory exists without CraftHelm install manifest (pass --force to overwrite). A copy that init-host wrote before it recorded a manifest looks like this; --force replaces it and marks it as managed.',
       });
       continue;
     }
@@ -420,6 +469,7 @@ export function installSkills(options = {}) {
         host_profile: entry.hostProfile,
         scope: entry.scope,
         skill_dir: entry.skillDir,
+        host_profile: hostProfile,
         action: exists ? (isManaged ? 'WOULD_UPDATE' : 'WOULD_OVERWRITE') : 'WOULD_INSTALL',
         skill_sha256: skillSha256,
         planned_files: [...Object.keys(filesMap).sort(), INSTALL_MANIFEST_NAME],
@@ -429,28 +479,7 @@ export function installSkills(options = {}) {
       continue;
     }
 
-    for (const [rel, content] of Object.entries(filesMap)) {
-      const dest = path.join(entry.skillDir, rel);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.writeFileSync(dest, content.replace(/\r\n/g, '\n'), 'utf8');
-    }
-
-    const manifestObj = {
-      schema_version: '0.3',
-      managed_by: 'crafthelm',
-      skill_name: 'crafthelm',
-      target: entry.target,
-      host_profile: entry.hostProfile,
-      scope: entry.scope,
-      crafthelm_root: toPosixPath(crafthelmRoot),
-      skill_sha256: skillSha256,
-      installed_at: new Date().toISOString(),
-    };
-    fs.writeFileSync(
-      path.join(entry.skillDir, INSTALL_MANIFEST_NAME),
-      `${JSON.stringify(manifestObj, null, 2)}\n`,
-      'utf8',
-    );
+    writeManagedSkillPackage(entry.skillDir, { hostProfile, target: entry.target, scope: entry.scope, crafthelmRoot });
 
     const kouetsuInfo = withKouetsu
       ? copyKouetsuSiblingIfMissing(entry.skillDir, entry.kouetsuBundle, crafthelmRoot, force)
@@ -461,6 +490,7 @@ export function installSkills(options = {}) {
       host_profile: entry.hostProfile,
       scope: entry.scope,
       skill_dir: entry.skillDir,
+      host_profile: hostProfile,
       action: exists ? (isManaged ? 'UPDATED' : 'OVERWRITTEN') : 'INSTALLED',
       skill_sha256: skillSha256,
       ...(kouetsuInfo ? { kouetsu: kouetsuInfo } : {}),
@@ -500,18 +530,8 @@ export function getSkillsInstallStatus(options = {}) {
     }
 
     const manifest = readInstallManifest(entry.skillDir);
-    if (!manifest || manifest.managed_by !== 'crafthelm') {
-      statuses.push({
-        target: entry.target,
-        host_profile: entry.hostProfile,
-        scope: entry.scope,
-        skill_dir: entry.skillDir,
-        status: 'UNMANAGED',
-      });
-      continue;
-    }
-
-    const expectedMap = buildExpectedFilesMap(entry.hostProfile, crafthelmRoot, crafthelmRoot);
+    const hostProfile = profileOf(entry, manifest);
+    const expectedMap = buildExpectedFilesMap(hostProfile, crafthelmRoot, crafthelmRoot);
     const expectedDigest = computeSkillPayloadDigest(expectedMap);
     const diskMap = {};
     let allPresent = true;
@@ -524,6 +544,22 @@ export function getSkillsInstallStatus(options = {}) {
       diskMap[rel] = fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
     }
     const diskDigest = allPresent ? computeSkillPayloadDigest(diskMap) : null;
+
+    if (!isManagedManifest(manifest)) {
+      // Nothing updates this copy, so whether it still says what this checkout says is the one
+      // thing worth knowing about it.
+      statuses.push({
+        target: entry.target,
+        host_profile: entry.hostProfile,
+        scope: entry.scope,
+        skill_dir: entry.skillDir,
+        status: 'UNMANAGED',
+        differs: diskDigest !== expectedDigest,
+        disk_sha256: diskDigest,
+        expected_sha256: expectedDigest,
+      });
+      continue;
+    }
     const isCurrent = Boolean(
       allPresent &&
       diskDigest === expectedDigest &&
@@ -532,7 +568,7 @@ export function getSkillsInstallStatus(options = {}) {
 
     statuses.push({
       target: entry.target,
-      host_profile: entry.hostProfile,
+      host_profile: hostProfile,
       scope: entry.scope,
       skill_dir: entry.skillDir,
       status: isCurrent ? 'INSTALLED' : 'OUTDATED',
