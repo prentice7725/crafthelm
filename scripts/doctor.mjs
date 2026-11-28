@@ -6,6 +6,7 @@ import { inspectClaudePermissionGuards } from './lib/claude-permissions.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { runCommand } from './lib/exec.mjs';
 import { cliInvocation } from './lib/paths.mjs';
+import { inspectZones } from './lib/zones.mjs';
 
 /**
  * Probe host environment capabilities for any built-in or custom/generic single-provider host
@@ -137,6 +138,22 @@ export function runDoctor(options = {}) {
     }
   }
 
+  // A project that has not said where its strict zones are gets the same review weight everywhere.
+  let zones = null;
+  if (options.repo) {
+    const state = inspectZones(options.repo);
+    zones = { status: state.status, strict: (state.committed.present ? state.committed.strict : state.working?.strict ?? []).map((z) => z.path) };
+    if (state.status !== 'COMMITTED') {
+      warnings.push({
+        code: state.status === 'UNDEFINED' ? 'ZONES_UNDEFINED' : 'ZONES_NOT_COMMITTED',
+        detail: state.status === 'UNDEFINED'
+          ? 'this project has not decided its strict zones; decide them with the user from the project\'s design'
+          : '.crafthelm/zones.json is not the committed version; runs are judged by the committed file',
+        fix: state.status === 'UNDEFINED' ? `${cli} zones set${repoFlag} --actor <name> --strict "<path>::<reason>" (or --none)` : 'commit .crafthelm/zones.json',
+      });
+    }
+  }
+
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   const runtimeOk = nodeMajor >= 24 && gitRes.exitCode === 0;
   const ok = requestedAvailable && runtimeOk && kouetsuOk;
@@ -153,6 +170,7 @@ export function runDoctor(options = {}) {
       platform: process.platform,
     },
     hosts,
+    ...(zones ? { zones } : {}),
     warnings,
   };
 }

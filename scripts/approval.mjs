@@ -377,6 +377,7 @@ export function listReviewQueue(options = {}) {
       package_sha256: inspected.reportSha ?? null,
       acceptable: inspected.problems.length === 0,
       problems: inspected.problems,
+      zone: inspected.manifest?.zone ?? null,
       tree_changed: Boolean(inspected.treeChanged),
       changed_since: inspected.changedSince ?? null,
     };

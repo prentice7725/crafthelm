@@ -45,6 +45,8 @@ const CONTROL_FILES = [
   // Policy that verify and the approval gate read from the protected base ref. Closed here so an
   // agent-edited copy cannot slip into the commit that later becomes that base ref.
   '.crafthelm/approvers.json',
+  // Which paths the project treats as strict. Decided with the user and written by `zones set`.
+  '.crafthelm/zones.json',
   '.crafthelm/config.json',
   '.crafthelm/skills.lock.json',
 ];
@@ -98,7 +100,7 @@ function readJsonSafe(filePath) {
 
 /**
  * Nearest ancestor of `startDir` that CraftHelm has set up: a `.crafthelm` directory holding a config,
- * contracts or runs. A bare `.crafthelm` (a home directory that only keeps an approver key) is not one.
+ * contracts, runs or its zones. A bare `.crafthelm` (a home directory that only keeps an approver key) is not one.
  * @param {string} startDir
  * @returns {string|null}
  */
@@ -106,7 +108,7 @@ export function findCraftHelmRepo(startDir) {
   let dir = path.resolve(startDir);
   for (;;) {
     const base = path.join(dir, '.crafthelm');
-    if (['config.json', 'contracts', 'runs'].some((name) => fs.existsSync(path.join(base, name)))) return dir;
+    if (['config.json', 'contracts', 'runs', 'zones.json'].some((name) => fs.existsSync(path.join(base, name)))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -252,7 +254,7 @@ export function describeSessionStatus(params) {
   if (scopes.length === 0) {
     if (params.event !== 'SessionStart') return '';
     const required = readJsonSafe(path.join(repoRoot, '.crafthelm', 'config.json'))?.require_run_for_edits === true;
-    return `CraftHelm: this repository uses CraftHelm and no run is in progress.${required ? ' File edits are blocked until one is open.' : ''} Before changing code, start one with: ${cli} start "<task>" ${repoFlag}. The user approves the contract; you do not.`;
+    return `CraftHelm: this repository uses CraftHelm and no run is in progress.${required ? ' File edits are blocked until one is open.' : ''} Before changing code, start one with: ${cli} start "<task>" ${repoFlag}. The user approves the contract; you do not.${fs.existsSync(path.join(repoRoot, '.crafthelm', 'zones.json')) ? '' : ` This project has not decided its strict zones (the paths where a mistake is expensive). Before the first task, work them out with the user from the project's design and record them: ${cli} zones set ${repoFlag} --actor <name> --strict "<path>::<reason>" (or --none).`}`;
   }
   // This text is added to every turn, so it stays short: the runs that can be worked on are spelled
   // out, and the ones waiting on a person share one line. Spelling out each waiting run would also
