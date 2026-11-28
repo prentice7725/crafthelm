@@ -259,6 +259,10 @@ export function describeSessionStatus(params) {
   // tell the agent "do not edit files" next to an open run that says where to edit.
   const open = scopes.filter((run) => !WAITING_ON_A_PERSON[run.state]);
   const waiting = scopes.filter((run) => WAITING_ON_A_PERSON[run.state]);
+  // The agent repeats what it is told here. Told only that the decision happens "outside this
+  // session", it sends the user away with no command; given the command, it can put it in front
+  // of them, and running it is one click in the app's terminal panel.
+  const reviewLine = `  The decision is the user's, made on a review page in their browser. Give them this command to run in their own terminal (the terminal panel of this app works), as it is and in a code block: ${cli} review ${repoFlag}. Do not run it yourself, and do not just tell them to do it outside the session.`;
   const describe = (run) => {
     const lock = WAITING_ON_A_PERSON[run.state] ? null : readWriterLock(repoRoot, run.run_id);
     const writerFlag = lock?.writer_id ? ` --writer ${lock.writer_id}` : '';
@@ -279,6 +283,7 @@ export function describeSessionStatus(params) {
         out.push(`  The reviewer (${decision.actor}) asked for changes: ${JSON.stringify(said)}. Make them inside the scope, then verify again.`);
       }
     }
+    if (run.state === STATES.READY_FOR_HUMAN_REVIEW) out.push(reviewLine);
     out.push(`  What failed and what is next: ${cli} status ${repoFlag} --run-id ${run.run_id} --explain`);
     return out;
   };
@@ -296,9 +301,7 @@ export function describeSessionStatus(params) {
         : '  Do not edit files for them or re-verify them, and never record their decision yourself. Report to the user; the next step is theirs.',
       `  Details of one: ${cli} status ${repoFlag} --run-id <run> --explain`,
     );
-    if (waiting.filter((run) => run.state === STATES.READY_FOR_HUMAN_REVIEW).length > 1) {
-      lines.push(`  The user can read and decide them on one page, from a terminal outside this session: ${cli} review ${repoFlag}. It also closes runs that later work replaced.`);
-    }
+    if (waiting.some((run) => run.state === STATES.READY_FOR_HUMAN_REVIEW)) lines.push(reviewLine);
   }
   return lines.join('\n');
 }
