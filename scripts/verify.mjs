@@ -38,6 +38,7 @@ import { appendProfileObservation, summarizeCheckOutcome } from './lib/profile-o
 import { assertValidSchema } from './lib/schema.mjs';
 import { STATES } from './lib/state-machine.mjs';
 import { listActiveScopes } from './lib/scope-guard.mjs';
+import { classifyZone, loadZonesPolicy } from './lib/zones.mjs';
 import { isOnlyClaudeGuardAddition } from './lib/claude-hooks.mjs';
 import { readClaudeSettings } from './lib/claude-permissions.mjs';
 import { isToolingBaselineFile } from './checkpoint.mjs';
@@ -1115,6 +1116,8 @@ export function runVerify(options) {
       protected_violations: [...protectedViolations].sort(),
       policy_tamper_detected: policy.tamperDetected,
     },
+    // Which of the project's zones the change touches, by the zones committed at the base ref.
+    zone: classifyZone(loadZonesPolicy(repoRoot, policy.baseRef ?? checkpoint.baseline_git_head), changedFiles),
     technical_status: technicalStatus,
     evidence_strength: evidenceStrength,
     delegation: summarizeDelegations(repoRoot, runId),

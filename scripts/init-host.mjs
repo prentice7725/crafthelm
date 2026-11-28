@@ -229,6 +229,11 @@ export function initHost(options = {}) {
     ...(claudePermissions ? { claude_permissions: claudePermissions } : {}),
     ...(claudeScopeHook ? { claude_scope_hook: claudeScopeHook } : {}),
     ...(claudeStatusHook ? { claude_status_hook: claudeStatusHook } : {}),
+    // CraftHelm does not choose a project's strict zones; it says when they are still undecided.
+    ...(fs.existsSync(path.join(repoRoot, '.crafthelm', 'zones.json')) ? {} : {
+      zones: 'UNDEFINED',
+      next_step: 'Decide this project\'s strict zones with the user, from its design: which paths are expensive to get wrong? Record them with: zones set --repo <path> --actor <name> --strict "<path>::<reason>" (or --none).',
+    }),
   };
 }
 

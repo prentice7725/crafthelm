@@ -99,6 +99,29 @@
         "policy_tamper_detected": { "type": "boolean" }
       }
     },
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "strict_files", "policy_source"],
+      "properties": {
+        "classification": { "type": "string", "enum": ["undefined", "strict", "light"] },
+        "strict_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "pattern", "reason"],
+            "properties": {
+              "path": { "type": "string" },
+              "pattern": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "policy_source": { "type": "string" },
+        "policy_digest": { "type": ["string", "null"] }
+      }
+    },
     "technical_status": {
       "type": "string",
       "enum": ["VERIFIED", "PARTIAL", "FAILED", "BLOCKED", "STALE"]

@@ -19,7 +19,10 @@
       "Bash(*crafthelm checkpoint approve-stage*)",
       "Bash(*checkpoint.mjs close*)",
       "Bash(*crafthelm.mjs checkpoint close*)",
-      "Bash(*crafthelm checkpoint close*)"
+      "Bash(*crafthelm checkpoint close*)",
+      "Bash(*zones.mjs set*)",
+      "Bash(*crafthelm.mjs zones set*)",
+      "Bash(*crafthelm zones set*)"
     ],
     "deny": [
       "Bash(git push*)",

@@ -90,6 +90,7 @@ export const GLOBAL_FALLBACK_PATTERNS_UNIVERSAL = [
   'contracts/schemas/**',
   '.crafthelm/reliability-rules.json',
   '.crafthelm/config.json',
+  '.crafthelm/zones.json',
   'REVIEW.md',
 ];
 

@@ -389,6 +389,6 @@ describe('CraftHelm JSON Schemas', () => {
 
     // Ensure all 13 schema files exist under contracts/schemas/
     const schemaFiles = fs.readdirSync(path.join(CRAFTHELM_ROOT, 'contracts', 'schemas')).filter((f) => f.endsWith('.schema.json'));
-    assert.equal(schemaFiles.length, 13);
+    assert.equal(schemaFiles.length, 14);
   });
 });

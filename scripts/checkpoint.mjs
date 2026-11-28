@@ -72,6 +72,7 @@ function computeBaselineCraftHelmFiles(repoRoot, docsDir = 'docs', taskId = null
     ...INTERVIEW_DOCS.map(name => `${effectiveDocsDir}/${name}`),
     `.crafthelm/contracts/${taskId}.json`,
     '.crafthelm/config.json',
+    '.crafthelm/zones.json',
     '.crafthelm/skills.lock.json',
     'GEMINI.md',
     // init-host --host claude merges the approval guards here. Its state at baseline is the starting
@@ -784,7 +785,7 @@ export function replanRun(options) {
 
 // Files the CraftHelm and host tooling own, as opposed to the run's own task documents and
 // contract. A person may move their baseline forward after updating the tooling mid-run.
-const TOOLING_BASELINE_FILES = ['.crafthelm/config.json', '.crafthelm/skills.lock.json', 'GEMINI.md', '.claude/settings.json'];
+const TOOLING_BASELINE_FILES = ['.crafthelm/config.json', '.crafthelm/zones.json', '.crafthelm/skills.lock.json', 'GEMINI.md', '.claude/settings.json'];
 const TOOLING_BASELINE_DIRS = ['.agents/skills/', '.claude/skills/', '.codex/skills/', '.gemini/skills/'];
 export const isToolingBaselineFile = (rel) => TOOLING_BASELINE_FILES.includes(rel) || TOOLING_BASELINE_DIRS.some((dir) => rel.startsWith(dir));
 

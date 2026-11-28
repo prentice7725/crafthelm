@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crafthelm.local/schemas/zones.schema.json",
+  "title": "CraftHelm Project Zones",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "strict", "decided_by", "decided_at", "decided_via"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "strict": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "reason"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "decided_by": { "type": "string", "minLength": 1 },
+    "decided_at": { "type": "string", "minLength": 1 },
+    "decided_via": { "type": "string", "enum": ["programmatic", "agent_session", "interactive_terminal", "non_interactive"] },
+    "basis": { "type": "string", "minLength": 1 }
+  }
+}

@@ -60,6 +60,7 @@ const SUBCOMMANDS = new Map([
   ['review', 'scripts/review.mjs'],
   ['memory', 'scripts/memory.mjs'],
   ['skills', 'scripts/skills.mjs'],
+  ['zones', 'scripts/zones.mjs'],
   ['benchmark', 'scripts/benchmark.mjs'],
   ['calibrate', 'scripts/calibrate.mjs'],
 ]);
@@ -91,6 +92,7 @@ function printHelp() {
       '  review           Open the review page: read and decide the runs waiting for a human decision',
       '  memory           index | search | decide | list Markdown SOT + SQLite FTS5 memory',
       '  skills           list | audit | lock | verify-lock external skills',
+      '  zones            show | set | check the paths this project treats as strict',
       '  benchmark        Run deterministic E01-E04, E10 comparison suite',
       '  calibrate        lite: measure lite E2E-exemption limits against recorded bugfix verification rounds',
       '',
