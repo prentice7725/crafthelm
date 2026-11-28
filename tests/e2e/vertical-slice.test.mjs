@@ -389,6 +389,8 @@ describe('CraftHelm M0 Vertical Slice E2E Tests (Flows A-N)', () => {
         request: 'Validate review package gates',
         host: 'codex',
         inputData: {
+          // The gate is opt-in per contract; this flow is about the gate.
+          editorial: { require_kouetsu: true },
           scope: { allow: ['src/**'], protect: [] },
           acceptance: [
             { id: 'AC-01', requirement: 'REQ-01', kind: 'unit', command: 'node tests/unit.mjs' },

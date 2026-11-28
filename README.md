@@ -13,7 +13,7 @@ CraftHelm은 단일 AI 호스트(Claude Code, Codex, Antigravity `agy`·IDE 세�
 1. **인터뷰와 계약 승인 (`start.mjs`, `interview.mjs`, `contract.mjs`):** 저장소 문서와 최근 Git 이력을 먼저 읽고, 요청 문구와 저장소 신호에서 질문을 만들어 `docs/tasks/<task_id>/interview_questions.md`에 남깁니다. `scope`, `acceptance`, `data`, `security`, `compatibility` 다섯 영역의 검토 여부도 함께 기록합니다. 기본적으로 미답변 질문은 가정으로 남겨 `CONTRACT_PENDING` 계약을 생성합니다. `--strict-interview`를 켜거나 입력 JSON에 미해결 `BLOCKER`가 있으면 계약을 쓰지 않고 `INTERVIEW_REQUIRED`를 돌려주며 멈춥니다. 이때는 `--scope-allow`·`--e2e-cmd`·`--test-cmd` 옵션을 채우거나 `interview --input <응답.json>`으로 답을 넘겨 다시 시작합니다. 계약의 기본 허용 범위(`scope.allow`)는 `['src/**', 'tests/**']`, 보호 경로(`scope.protect`)는 `tests/acceptance/**`, `docs/approved/**`, `REVIEW.md`, `.crafthelm/reliability-rules.json`입니다. 계약을 수정한 뒤에는 `contract approve`로 다시 승인받아야 합니다. 방법론은 `lifecycle`·`specification`·`engineering`·`execution` 네 설정 조합으로 12단계 계획을 생성합니다.
 2. **구현과 작업 분배 (`checkpoint.mjs`, `route.mjs`, `delegate.mjs`, `memory.mjs`):** 에이전트는 허용 범위(`scope.allow`) 안에서 코드를 수정합니다. `route`는 작업을 `deterministic`·`lightweight`·`standard`·`reasoning` 네 단계로 분류해 `.crafthelm/config.json`의 `host_profiles`·`model_tiers`와 환경 변수(`CRAFTHELM_MODEL_LIGHTWEIGHT`, `CRAFTHELM_MODEL_STANDARD`, `CRAFTHELM_MODEL_REASONING`)에 맞는 모델 힌트를 고릅니다. `delegate run --execute`는 호스트 어댑터로 워커를 실행해 사용량을 실측하고, 세션 내 서브에이전트 결과는 `delegate record`로 받습니다. 위임 기록이 없으면 증거 매니페스트에 `UNOBSERVED`로 남깁니다. 작업 상태는 단일 writer 락과 체크포인트로 관리하며 같은 원인 실패가 3라운드를 넘기면 `BLOCKED_HUMAN_ATTENTION`으로 멈춥니다. 장기 결정과 이력은 Markdown 원문과 `node:sqlite` FTS5 색인(`memory.mjs`)으로 관리합니다.
 3. **실행 검증과 증거 강도 (`verify.mjs`, `impact.mjs`):** `verify`는 보호된 기준선(`policy_base_ref`)에서 검증 규칙을 읽어 `fast`·`unit`·`e2e`·`property`·`differential` 수용 기준과 Diff 기반 신뢰성 규칙(`observe`/`enforce`)을 실행합니다. 다언어(JS/TS·Python·Go·Rust·Java/Kotlin·C#·C/C++·Ruby·PHP) 정적 영향도 분석과 커스텀 분석기(`--analyzer-cmd`)를 결합해 `--selective` 회귀 테스트를 고르고, 전역 설정 변경이나 매칭 0건일 때는 전체 테스트로 돌아갑니다. 통과한 검사가 실제로 변경 코드를 실행했는지와 테스트 약화(삭제·skip·단언 감소) 여부를 `evidence_strength`에 기록하며 `--mutation-probe`를 켜면 변경된 줄을 깨뜨려 통과한 테스트가 실제로 실패하는지도 확인합니다.
-4. **검토 보고서 발행과 교열 (`review-package.mjs`):** `READY_FOR_HUMAN_REVIEW` 단계에 올릴 8개 섹션 보고서(`reports/review-package.md`)를 만들고, 증거 매니페스트와의 수용 기준 일치 여부·깨진 파일 링크·Kouetsu `1.1.0` 기반 3계층 교열 게이트를 점검합니다. 이 교열 게이트는 저장소에 포함된 Kouetsu 번들로 바로 실행됩니다. `EDITORIAL_GATE_FAILED`나 `CRITICAL_CONFIRMATION_BLOCKED`로 차단되면 `.crafthelm/runs/<run_id>/reports/editorial-report.json`의 `findings`와 `critical_confirmations`를 확인해 문구 또는 미해결 항목을 정리한 뒤 `review-package`를 다시 실행합니다.
+4. **검토 보고서 발행과 교열 (`review-package.mjs`):** `READY_FOR_HUMAN_REVIEW` 단계에 올릴 8개 섹션 보고서(`reports/review-package.md`)를 만들고, 증거 매니페스트와의 수용 기준 일치 여부·깨진 파일 링크·Kouetsu `1.1.0` 기반 3계층 교열을 점검합니다. 교열은 저장소에 포함된 Kouetsu 번들로 바로 실행되고 결과를 기록합니다. 교열 결과가 발행을 막는 것은 계약이 `editorial.require_kouetsu`를 `true`로 둘 때뿐이며 기본값은 `false`입니다. `[확인 필요]` 표시가 중요 절에 남아 있으면 어느 경우든 막습니다. `EDITORIAL_GATE_FAILED`나 `CRITICAL_CONFIRMATION_BLOCKED`로 차단되면 `.crafthelm/runs/<run_id>/reports/editorial-report.json`의 `findings`와 `critical_confirmations`를 확인해 문구 또는 미해결 항목을 정리한 뒤 `review-package`를 다시 실행합니다.
 5. **사람의 최종 인수 (`approval.mjs`):** AI 에이전트 세션과 비대화형 터미널의 `approve record` 호출을 막고, 지정 승인자의 명시적 결정과 사유만 기록합니다. 저장소에 보호된 승인자 정책(`.crafthelm/approvers.json`)이 있으면 등록된 `actor`의 `ed25519` 서명만 받습니다. 서명을 강제하려면 AI 세션 밖의 터미널에서 `approve keygen --out <개인키_경로> --actor <이름>`으로 키를 만든 뒤 개인키는 저장소 밖에 보관하고, 출력된 공개키 지문을 기본 브랜치의 `.crafthelm/approvers.json`(`"require_signed": true`)에 커밋합니다. 인수 결정은 검증된 스냅샷에 대한 것입니다. 인수 뒤에 계약·증거·보고서·서명이 달라지면 효력을 무효로 판정하고, 코드가 더 바뀐 것은 무효로 보지 않고 결정 기록과 `approve verify` 결과에 알립니다.
 
 ## 판정 주체와 한계
@@ -87,7 +87,7 @@ node scripts/crafthelm.mjs status --repo /path/to/repo
 # --- 여기서 범위(scope.allow) 안의 코드를 수정합니다 ---
 
 # 4) 선택적 회귀 테스트 + E2E 검증 실행 (stderr: 로그, stdout: 결과 JSON)
-node scripts/crafthelm.mjs verify --repo /path/to/repo --run-id RUN-001 --selective
+node scripts/crafthelm.mjs verify --repo /path/to/repo --run-id RUN-001
 
 # 5) 8개 섹션 검토 보고서 발행 (READY_FOR_HUMAN_REVIEW 도달)
 node scripts/crafthelm.mjs review-package --repo /path/to/repo --run-id RUN-001
@@ -117,7 +117,7 @@ node scripts/crafthelm.mjs start "로그인 토큰 만료 비교 연산 오류 �
 # --- 범위(scope.allow) 안의 코드를 수정합니다 ---
 
 # 2) 검증 + 검토 보고서 발행 (READY_FOR_HUMAN_REVIEW)
-node scripts/crafthelm.mjs feedback --repo /path/to/repo --run-id CH-T001-RUN-001 --selective
+node scripts/crafthelm.mjs feedback --repo /path/to/repo --run-id CH-T001-RUN-001
 
 # 3) 사람이 자기 터미널에서 최종 인수 결정 기록 (또는 `review --repo /path/to/repo`)
 node scripts/crafthelm.mjs approve record --repo /path/to/repo --run-id CH-T001-RUN-001 \
@@ -145,9 +145,9 @@ node scripts/crafthelm.mjs install-skills --status
 npm run install:skills
 node scripts/crafthelm.mjs impact --repo . --json
 node scripts/crafthelm.mjs route --task-type classify --host antigravity --json
-node scripts/crafthelm.mjs verify --repo <target-repo> --run-id <run-id> --selective
+node scripts/crafthelm.mjs verify --repo <target-repo> --run-id <run-id>
 node scripts/crafthelm.mjs verify --repo <target-repo> --run-id <run-id> --history
-node scripts/crafthelm.mjs feedback --repo <target-repo> --run-id <run-id> --selective
+node scripts/crafthelm.mjs feedback --repo <target-repo> --run-id <run-id>
 node scripts/crafthelm.mjs approve keygen --out ~/.crafthelm/approver.pem --actor release-owner
 node scripts/crafthelm.mjs approve verify --repo <target-repo> --run-id <run-id>
 node scripts/crafthelm.mjs memory decide --title "Rotate refresh tokens" --body "Single-use rotation"

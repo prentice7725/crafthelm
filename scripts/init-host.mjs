@@ -115,8 +115,8 @@ export function initHost(options = {}) {
     ...(Object.keys(hostConfig).length > 0 ? { host_config: hostConfig } : {}),
     verification_policy: {
       require_e2e_for_functional: true,
-      require_kouetsu: true,
-      regression_mode: 'selective',
+      require_kouetsu: false,
+      regression_mode: 'full',
       ...(options.testCommandTemplate ? { test_command_template: options.testCommandTemplate } : {}),
       ...(options.customAnalyzer ? { custom_impact_analyzer: options.customAnalyzer } : {}),
     },

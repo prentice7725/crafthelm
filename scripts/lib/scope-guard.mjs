@@ -271,7 +271,7 @@ export function describeSessionStatus(params) {
     const out = [
       `CraftHelm: run ${run.run_id} (task ${run.task_id}) is ${run.state}.`,
       `  Write only inside scope.allow: ${run.allow.join(', ') || '(nothing)'}.${run.protect.length > 0 ? ` Never inside scope.protect: ${run.protect.join(', ')}.` : ''}`,
-      `  ${WAITING_ON_A_PERSON[run.state] ?? `After editing, verify with: ${cli} verify ${repoFlag} --run-id ${run.run_id} --selective${writerFlag}`}`,
+      `  ${WAITING_ON_A_PERSON[run.state] ?? `After editing, verify with: ${cli} verify ${repoFlag} --run-id ${run.run_id}${writerFlag}`}`,
     ];
     if (lock?.writer_id) {
       out.push(`  Writer lock held by "${lock.writer_id}": verify, feedback and checkpoint commands on this run need --writer ${lock.writer_id}. Release it when the edits are done.`);

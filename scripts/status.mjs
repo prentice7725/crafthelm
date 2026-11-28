@@ -86,7 +86,7 @@ export function recommendNextActionForRun(runSummary, repoArg = '.') {
   if (state === STATES.REPAIRING || state === STATES.CHANGES_REQUESTED) {
     return {
       next_action: '실패 원인 또는 수정 요청 사항을 해결한 뒤 선택적 검증을 다시 실행하세요.',
-      next_command: `${cliInvocation()} verify --repo ${repoFlag} --run-id ${runId} --selective`,
+      next_command: `${cliInvocation()} verify --repo ${repoFlag} --run-id ${runId}`,
     };
   }
 
@@ -99,7 +99,7 @@ export function recommendNextActionForRun(runSummary, repoArg = '.') {
 
   return {
     next_action: '허용된 범위(scope.allow) 내에서 구현을 진행한 뒤 결정적 검증을 실행하세요.',
-    next_command: `${cliInvocation()} verify --repo ${repoFlag} --run-id ${runId} --selective`,
+    next_command: `${cliInvocation()} verify --repo ${repoFlag} --run-id ${runId}`,
   };
 }
 

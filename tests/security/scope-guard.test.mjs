@@ -303,7 +303,7 @@ describe('Session status hook: the open run stays in front of the agent after th
       const text = describeSessionStatus({ cwd: path.join(repo, 'src'), event: 'UserPromptSubmit' });
       assert.match(text, /^CraftHelm: run TURN-RUN \(task TURN\) is READY\./);
       assert.match(text, /Write only inside scope\.allow: src\/\*\*\. Never inside scope\.protect: src\/generated\/\*\*\./);
-      assert.match(text, /After editing, verify with: node ".*scripts\/crafthelm\.mjs" verify --repo ".*" --run-id TURN-RUN --selective/);
+      assert.match(text, /After editing, verify with: node ".*scripts\/crafthelm\.mjs" verify --repo ".*" --run-id TURN-RUN\n/);
       assert.match(text, /status --repo ".*" --run-id TURN-RUN --explain/);
 
       const viaHook = runStatusHook({ hook_event_name: 'UserPromptSubmit', cwd: repo, prompt: 'continue' });

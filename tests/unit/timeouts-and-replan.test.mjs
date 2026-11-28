@@ -198,7 +198,7 @@ describe('Session status: short on every turn, and consistent', () => {
       // Several runs wait for acceptance: the reminder names the one command that decides them together.
       assert.match(lines[8], /^  The decision is the user's, made on a review page in their browser\. Give them this command to run in their own terminal \(the terminal panel of this app works\), as it is and in a code block: node ".*crafthelm\.mjs" review --repo ".*"\. Do not run it yourself, and do not just tell them to do it outside the session\.$/);
       assert.match(lines[0], /^CraftHelm: run M1B-RUN \(task M1B\) is READY\.$/);
-      assert.match(lines[2], /verify --repo ".*" --run-id M1B-RUN --selective$/);
+      assert.match(lines[2], /verify --repo ".*" --run-id M1B-RUN$/);
       // The open run also says where a concern goes that the contract does not ask for.
       assert.ok(lines[3].startsWith('  Something looks needed that the contract does not ask for? Do not build it and do not widen the contract: leave one line for the reviewer with node "'));
       assert.ok(lines[3].endsWith('crafthelm.mjs" checkpoint consider --repo "' + repo.replace(/\\/g, '/') + '" --run-id M1B-RUN --note "<what, in one line>".'), lines[3]);
@@ -210,7 +210,7 @@ describe('Session status: short on every turn, and consistent', () => {
       // With the lock held, the command the agent is told to run is one that will not be refused.
       acquireWriterLock({ repo, runId: 'M1B-RUN', writer: 'lead-1' });
       const locked = describeSessionStatus({ cwd: repo, event: 'UserPromptSubmit' });
-      assert.match(locked, /verify --repo ".*" --run-id M1B-RUN --selective --writer lead-1\n/);
+      assert.match(locked, /verify --repo ".*" --run-id M1B-RUN --writer lead-1\n/);
       assert.match(locked, /Writer lock held by "lead-1": verify, feedback and checkpoint commands on this run need --writer lead-1\./);
 
       // Nothing open: the waiting runs still share one line, and the next step is the user's.
