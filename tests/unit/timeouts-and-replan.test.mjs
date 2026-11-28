@@ -196,7 +196,7 @@ describe('Session status: short on every turn, and consistent', () => {
       const lines = text.split('\n');
       assert.equal(lines.length, 8);
       // Several runs wait for acceptance: the reminder names the one command that decides them together.
-      assert.match(lines[7], /^  The user can read and decide them on one page, from a terminal outside this session: node ".*crafthelm\.mjs" review --repo ".*"\. It also closes runs that later work replaced\.$/);
+      assert.match(lines[7], /^  The decision is the user's, made on a review page in their browser\. Give them this command to run in their own terminal \(the terminal panel of this app works\), as it is and in a code block: node ".*crafthelm\.mjs" review --repo ".*"\. Do not run it yourself, and do not just tell them to do it outside the session\.$/);
       assert.match(lines[0], /^CraftHelm: run M1B-RUN \(task M1B\) is READY\.$/);
       assert.match(lines[2], /verify --repo ".*" --run-id M1B-RUN --selective$/);
       assert.equal(lines[4], "CraftHelm: 4 other runs wait on a person's decision: M0A-RUN (READY_FOR_HUMAN_REVIEW), M0B-RUN (READY_FOR_HUMAN_REVIEW), M0C-RUN (READY_FOR_HUMAN_REVIEW), M1-RUN (BLOCKED_HUMAN_ATTENTION).");
