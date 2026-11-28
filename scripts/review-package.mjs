@@ -192,7 +192,7 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     '|---|---|',
     `| 작업 | \`${contract.task_id}\` — ${contract.title ?? contract.request} |`,
     `| 이번 승인 대상 | ${contract.scope.allow.join(', ')} (${manifest.scope.changed_files.length}개 파일 변경) |`,
-    `| 실행 계약 승인 | \`${contract.approval?.contract_approved_by ?? 'unknown'}\` — 승인 경로: \`${contract.approval?.contract_approved_via ?? 'unknown'}\` (\`agent_session\`이면 AI 세션 안에서 실행된 승인) |`,
+    `| 실행 계약 승인 | \`${contract.approval?.contract_approved_by ?? 'unknown'}\` — 승인 경로: \`${contract.approval?.contract_approved_via ?? 'unknown'}\` (\`agent_session\`이면 AI 세션 안에서 실행된 승인, \`standing_rule\`이면 프로젝트가 정한 규칙에 따른 시작이며 개별 승인 없음) |`,
     ...rebaselineRows,
     `| 승인하면 달라지는 것 | ${cell(contract.request)}${uncovered.length > 0 ? ` (이 중 ${uncovered.map((r) => `\`${r.id}\``).join(', ')}은 수용 기준이 없어 검증되지 않았습니다)` : ''} |`,
     `| 자동 검증 상태 | **${manifest.technical_status}** — 근거: \`../evidence-manifest.json\` |`,

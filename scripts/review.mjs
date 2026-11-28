@@ -107,6 +107,9 @@ export function buildReviewData(options = {}) {
     const notes = [];
     for (const item of stamp.unverified ?? []) notes.push({ kind: 'unverified', text: item });
     for (const signal of manifest.evidence_strength?.signals ?? []) notes.push({ kind: 'evidence', text: signal.human_check ? `${signal.detail} ${signal.human_check}` : signal.detail });
+    if (contract.approval?.contract_approved_via === 'standing_rule') {
+      notes.push({ kind: 'contract', text: `The contract was started under the project's standing rule for light contracts (${contract.approval.contract_approved_by ?? 'unknown'}); nobody approved it individually.` });
+    }
     if (contract.approval?.contract_approved_via === 'agent_session') {
       notes.push({ kind: 'contract', text: `The contract was approved inside an AI agent session, recorded under the name "${contract.approval.contract_approved_by ?? 'unknown'}".` });
     }

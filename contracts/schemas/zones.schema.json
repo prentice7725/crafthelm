@@ -22,6 +22,17 @@
     "decided_by": { "type": "string", "minLength": 1 },
     "decided_at": { "type": "string", "minLength": 1 },
     "decided_via": { "type": "string", "enum": ["programmatic", "agent_session", "interactive_terminal", "non_interactive"] },
-    "basis": { "type": "string", "minLength": 1 }
+    "basis": { "type": "string", "minLength": 1 },
+    "light_contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "decided_by", "decided_at", "decided_via"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["ask", "standing"] },
+        "decided_by": { "type": "string", "minLength": 1 },
+        "decided_at": { "type": "string", "minLength": 1 },
+        "decided_via": { "type": "string", "enum": ["programmatic", "agent_session", "interactive_terminal", "non_interactive"] }
+      }
+    }
   }
 }
