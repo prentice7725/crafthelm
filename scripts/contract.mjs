@@ -445,7 +445,7 @@ if (isMainModule(import.meta.url)) {
           const result = approve();
           const cp = initialize({ contract: result.contract_path, baselineRef: typeof args['baseline-ref'] === 'string' ? args['baseline-ref'] : undefined });
           result.run = { run_id: cp.run_id, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
-          result.next_command = `${cliInvocation()} feedback --repo "${repo}" --run-id ${cp.run_id} --selective`;
+          result.next_command = `${cliInvocation()} feedback --repo "${repo}" --run-id ${cp.run_id}`;
           return result;
         });
       } else {

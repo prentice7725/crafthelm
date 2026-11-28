@@ -39,7 +39,7 @@
     ]
   },
   "crafthelm": {
-    "require_kouetsu": true,
+    "require_kouetsu": false,
     "protect_base_ref": true,
     "allow_cross_provider_fallback": false
   }

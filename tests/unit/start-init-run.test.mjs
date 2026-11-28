@@ -56,7 +56,7 @@ describe('Chained start: contract approval + run baseline in one call', () => {
         { run_id: started.run.run_id, initialized: started.run.initialized, state: started.run.state },
         { run_id: 'CH-T001-RUN-001', initialized: true, state: 'READY' },
       );
-      assert.match(started.next_command, /feedback --repo .* --run-id CH-T001-RUN-001 --selective/);
+      assert.match(started.next_command, /feedback --repo .* --run-id CH-T001-RUN-001$/);
       assert.match(formatStartText(started), /실행 ID: CH-T001-RUN-001 \(기준선 동결 완료\)/);
       assert.ok(fs.existsSync(getCheckpointPath(repo, 'CH-T001-RUN-001')));
 
@@ -123,7 +123,7 @@ describe('Chained start: contract approval + run baseline in one call', () => {
       const out = JSON.parse(cli.stdout);
       assert.equal(out.approved_via, 'agent_session');
       assert.equal(out.run.run_id, 'CH-T001-RUN-001');
-      assert.match(out.next_command, /feedback --repo .* --run-id CH-T001-RUN-001 --selective/);
+      assert.match(out.next_command, /feedback --repo .* --run-id CH-T001-RUN-001$/);
       assert.ok(fs.existsSync(getCheckpointPath(repo, 'CH-T001-RUN-001')));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });

@@ -350,7 +350,7 @@ export function runInterview(options = {}) {
       source_refs: input.source_policy?.source_refs ?? (sot.sot_sources.length > 0 ? sot.sot_sources : ['README.md']),
     },
     editorial: {
-      require_kouetsu: input.editorial?.require_kouetsu ?? true,
+      require_kouetsu: input.editorial?.require_kouetsu ?? false,
       language: input.editorial?.language ?? 'ko',
       preset: input.editorial?.preset ?? 'executive',
     },

@@ -271,7 +271,7 @@ function finishStart({ options, repoArg, repoRoot, requestText, detected, cmdHin
   let nextCommand;
   if (run?.initialized) {
     nextAction = '계약 승인과 실행 기준선 동결까지 끝났습니다. 허용 범위(scope.allow) 안에서 코드를 수정한 뒤 아래 명령으로 검증과 검토 보고서 발행을 한 번에 실행하세요.';
-    nextCommand = `${cliInvocation()} feedback --repo ${quoteArg(repoArg)} --run-id ${runId} --selective`;
+    nextCommand = `${cliInvocation()} feedback --repo ${quoteArg(repoArg)} --run-id ${runId}`;
   } else if (iv.warnings?.some((w) => w.code === 'LITE_PROFILE_NOT_ELIGIBLE')) {
     nextAction = '경량 프로필(lite)은 버그 수정(bugfix)에만 쓸 수 있습니다. 프로필을 빼고 다시 실행하세요.';
     nextCommand = `${cliInvocation()} start ${quoteArg(requestText)} --repo ${quoteArg(repoArg)} --task-id ${iv.task_id} --overwrite`;

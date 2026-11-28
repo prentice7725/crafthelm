@@ -157,7 +157,7 @@ describe('Batch 2 crafthelm start & crafthelm status', () => {
       assert.equal(singleReady.mode, 'single_active_run');
       assert.equal(singleReady.selected_run.run_id, 'RUN-01');
       assert.equal(singleReady.selected_run.state, STATES.READY);
-      assert.match(singleReady.next_command, /verify --repo .* --run-id RUN-01 --selective/);
+      assert.match(singleReady.next_command, /verify --repo .* --run-id RUN-01$/);
 
       // Verify & publish review-package -> READY_FOR_HUMAN_REVIEW -> approve record command
       fs.writeFileSync(path.join(repo, 'src/app.mjs'), 'export const value = 2;\n', 'utf8');
