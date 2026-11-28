@@ -21,6 +21,7 @@ import {
 } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
 import { assertContractIsApprovedCopy } from './lib/contract-approval.mjs';
+import { appendTrialRecord, assessAcceptanceTrial } from './lib/acceptance-trial.mjs';
 import { STATES, WATERFALL_GATED_STAGES, assertTransition, canTransition } from './lib/state-machine.mjs';
 import { assertNoForeignWriterLock, describeLockRelease, readWriterLock } from './lib/writer-lock.mjs';
 
@@ -449,6 +450,12 @@ export function closeRun(options) {
   checkpoint.state = STATES.ABORTED;
   checkpoint.closure = closure;
   saveCheckpoint(repoRoot, runId, checkpoint);
+  if (closure.previous_state === STATES.READY_FOR_HUMAN_REVIEW) {
+    const readOptional = (file) => { try { return readJson(file); } catch { return null; } };
+    const manifest = readOptional(getEvidenceManifestPath(repoRoot, runId));
+    const stamp = readOptional(path.join(getRunDir(repoRoot, runId), 'evidence', 'verification-stamp.json'));
+    appendTrialRecord(repoRoot, { run_id: runId, task_id: checkpoint.task_id, decision: 'closed', zone: manifest?.zone?.classification, trial: assessAcceptanceTrial(manifest, stamp) });
+  }
   return { ok: true, run_id: runId, state: checkpoint.state, closure };
 }
 

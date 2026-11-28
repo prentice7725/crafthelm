@@ -88,7 +88,7 @@ function printHelp() {
       '  verify           Execute AC checks (--selective supported), E2E/property/differential tests, reliability rules',
       '  feedback         Run bounded verify -> feedback -> repair -> READY_FOR_HUMAN_REVIEW loop',
       '  review-package   Generate 8-section Markdown package, validate links/ACs, run Kouetsu editorial check',
-      '  approve          record | batch | queue | verify explicit human acceptance decisions',
+      '  approve          record | batch | queue | trial | verify explicit human acceptance decisions',
       '  review           Open the review page: read and decide the runs waiting for a human decision',
       '  memory           index | search | decide | list Markdown SOT + SQLite FTS5 memory',
       '  skills           list | audit | lock | verify-lock external skills',
