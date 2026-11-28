@@ -117,6 +117,7 @@ export function buildReviewData(options = {}) {
       acceptable: entry.acceptable,
       problems: entry.problems,
       zone: entry.zone,
+      trial: entry.trial,
       tree_changed: entry.tree_changed,
       changed_since: entry.changed_since,
       technical_status: entry.technical_status,

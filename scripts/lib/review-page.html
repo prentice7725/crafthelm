@@ -105,6 +105,7 @@ const PROBLEM = {
 };
 const VERDICT = { verified: ['검증됨', 'ok'], partly: ['일부 미검증', 'warn'], unverified: ['미검증', 'warn'], failed: ['실패', 'bad'] };
 const CHECK = { PASS: '통과', FAIL: '실패', BLOCKED: '실행 못 함', UNVERIFIED: '사람 확인 필요', SKIPPED_UNIMPACTED: '앞선 통과 유지', NOT_APPLICABLE: '해당 없음' };
+const TRIAL_REASON = { ZONE_STRICT: '엄격 구역을 건드립니다', ZONE_UNDEFINED: '프로젝트의 구역이 정해지지 않았습니다', NOT_VERIFIED: '자동 검증이 VERIFIED가 아닙니다', UNVERIFIED_ITEMS: '검증되지 않은 항목이 있습니다', NOT_ACCEPTABLE: '지금 상태로는 수용할 수 없습니다' };
 const DECISION = { accept: '수용함', changes: '수정 요청함', close: '닫음' };
 
 async function api(path, body) {
@@ -130,6 +131,7 @@ async function load() {
 function tagsOf(run) {
   const tags = [];
   if (!run.acceptable) tags.push('<span class="pill bad">수용 불가</span>');
+  if (run.trial && run.trial.candidate) tags.push('<span class="pill ok">위임 대상</span>');
   const zone = run.zone ? run.zone.classification : 'undefined';
   tags.push(zone === 'strict' ? '<span class="pill info">엄격 구역</span>' : zone === 'light' ? '<span class="pill">가벼운 구역</span>' : '<span class="pill">구역 미정</span>');
   if (run.tree_changed && (run.changed_since === null || run.changed_since.length > 0)) tags.push('<span class="pill warn">이후 변경</span>');
@@ -141,7 +143,8 @@ function tagsOf(run) {
 
 function renderSide() {
   const d = state.data;
-  $('sub').textContent = d.repo_name + ' · ' + d.waiting + '건 대기 · 결정자 ' + d.actor;
+  const candidates = runs().filter((r) => r.trial && r.trial.candidate).length;
+  $('sub').textContent = d.repo_name + ' · ' + d.waiting + '건 대기' + (candidates > 0 ? ' (위임 대상 ' + candidates + '건)' : '') + ' · 결정자 ' + d.actor;
   let html = '';
   for (const group of d.groups) {
     const ready = group.runs.filter((r) => r.acceptable).map((r) => r.run_id);
@@ -182,6 +185,11 @@ function renderDetail() {
     + (run.verified_at ? '<span>검증 ' + esc(new Date(run.verified_at).toLocaleString()) + '</span>' : '') + '</div>';
   for (const p of run.problems) html += '<div class="notice bad">' + esc(PROBLEM[p.code] || p.message) + '</div>';
   const zoneInfo = run.zone || { classification: 'undefined', strict_files: [] };
+  if (run.trial) {
+    html += '<h3>위임 수용 수습</h3><div class="check">' + (run.trial.candidate
+      ? '위임 규칙이 켜져 있었다면 검토 없이 수용됐을 실행입니다. 지금은 표시만 하고, 여기서 내린 결정이 이 판정과 일치했는지를 기록합니다.'
+      : '위임 규칙이 켜져 있어도 사람이 검토했을 실행입니다: ' + run.trial.reasons.map((r) => TRIAL_REASON[r] || r).join(', ') + '.') + '</div>';
+  }
   html += '<h3>구역</h3><div class="check">' + (zoneInfo.classification === 'strict'
     ? '이 프로젝트가 엄격 구역으로 정한 경로를 건드립니다.'
     : zoneInfo.classification === 'light'

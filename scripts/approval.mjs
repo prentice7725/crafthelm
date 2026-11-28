@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { closeRun } from './checkpoint.mjs';
+import { appendTrialRecord, assessAcceptanceTrial, summarizeAcceptanceTrial } from './lib/acceptance-trial.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
 import { findAlteredEvidenceLogs, writeJsonAtomic } from './lib/evidence-io.mjs';
@@ -235,6 +236,13 @@ export function recordHumanDecision(options) {
   const historyPath = getApprovalHistoryPath(repoRoot, runId);
   fs.mkdirSync(path.dirname(historyPath), { recursive: true });
   fs.appendFileSync(historyPath, `${JSON.stringify(record)}\n`, 'utf8');
+  appendTrialRecord(repoRoot, {
+    run_id: runId,
+    task_id: contract.task_id,
+    decision: normalizedDecision,
+    zone: manifest.zone?.classification,
+    trial: assessAcceptanceTrial(manifest, stamp),
+  });
 
   checkpoint.state = targetState;
   checkpoint.current_stage = 'human_acceptance';
@@ -378,6 +386,7 @@ export function listReviewQueue(options = {}) {
       acceptable: inspected.problems.length === 0,
       problems: inspected.problems,
       zone: inspected.manifest?.zone ?? null,
+      trial: assessAcceptanceTrial(inspected.manifest ?? null, inspected.stamp ?? null, inspected.problems),
       tree_changed: Boolean(inspected.treeChanged),
       changed_since: inspected.changedSince ?? null,
     };
@@ -513,6 +522,7 @@ function printUsage() {
       '  approval.mjs record --repo <path> --run-id <id> --decision <accept|changes-requested|reject|request-verification> --actor <name> --rationale "<text>" [--sign-key <ed25519.pem>] [--contract <path>]',
       '  approval.mjs batch  --repo <path> --actor <name> [--rationale "<text>"] [--sign-key <ed25519.pem>]',
       '  approval.mjs queue  --repo <path>',
+      '  approval.mjs trial  --repo <path>   (how a standing acceptance rule would have compared with your decisions)',
       '  approval.mjs verify --repo <path> --run-id <id> [--contract <path>]',
       '  approval.mjs keygen --out <private-key-path> --actor <name>',
       '',
@@ -593,6 +603,10 @@ if (isMainModule(import.meta.url)) {
       }
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
       if (!res.ok) process.exit(1);
+    } else if (sub === 'trial') {
+      const summary = summarizeAcceptanceTrial(path.resolve(args.repo ?? '.'));
+      process.stderr.write(`${summary.reading}\n`);
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     } else if (sub === 'queue') {
       process.stdout.write(`${JSON.stringify(listReviewQueue({ repo: args.repo }), null, 2)}\n`);
     } else if (sub === 'verify') {
@@ -627,7 +641,7 @@ if (isMainModule(import.meta.url)) {
         )}\n`,
       );
     } else {
-      throw new Error('Usage: approval.mjs <record|batch|queue|verify|keygen> --repo <path> ...');
+      throw new Error('Usage: approval.mjs <record|batch|queue|trial|verify|keygen> --repo <path> ...');
     }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
