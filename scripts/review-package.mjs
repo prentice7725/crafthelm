@@ -218,7 +218,7 @@ function renderReviewPackageMarkdown({ contract, checkpoint, manifest, stamp, pr
     `작업자가 ${changedFilesSummary} 파일을 수정했고 상세 패치는 \`${relFromReports(manifest.scope.diff_file)}\`에 기록했습니다.`,
     '',
     `**영향 범위:** 허용 경로 \`${contract.scope.allow.join(', ')}\` 내 변경, 보호 경로 위반 ${manifest.scope.protected_violations.length}건.  `,
-    `**호환성·되돌리기:** \`git checkout ${manifest.baseline_git_head}\` 또는 diff 되돌리기로 기준선 복구 가능합니다.`,
+    `**호환성·되돌리기:** 기준선은 \`${manifest.baseline_git_head}\`이고, 그 뒤의 변경은 \`../${manifest.scope.diff_file}\`에 있습니다. 커밋한 변경은 \`git revert\`로 되돌리고, 커밋하지 않은 변경은 \`git restore\`로 되돌린 뒤 새로 생긴 파일을 지웁니다. \`git checkout ${manifest.baseline_git_head}\`만으로는 커밋하지 않은 변경이 남습니다.`,
     '',
     '## 3. 요구사항과 검증 결과',
     '',

@@ -4,7 +4,7 @@ CraftHelm은 단일 AI 호스트(Claude Code, Codex, Antigravity `agy`·IDE 세�
 
 요구사항 정리와 코드 수정은 에이전트가 맡고, 테스트 실행·범위 검사·해시 기록은 로컬 스크립트가 맡습니다. 최종 인수 여부는 지정된 승인자가 결정합니다. 자동 검증이 통과해도 상태는 `READY_FOR_HUMAN_REVIEW`에서 멈추며, `COMPLETE` 상태는 없습니다.
 
-호스트 스킬을 등록하면 세션 안의 에이전트가 `interview`, `route`, `delegate`, `verify`, `review-package` CLI를 순서대로 호출해 작업합니다. 계약 승인(`contract approve`), 잠금 해제(`checkpoint release-lock`), 키 생성(`approve keygen`), 최종 인수(`approve record`)는 사람이 터미널에서 직접 실행합니다.
+호스트 스킬을 등록하면 세션 안의 에이전트가 `interview`, `route`, `delegate`, `verify`, `review-package` CLI를 순서대로 호출해 작업합니다. 계약 승인(`contract approve`)은 사용자가 대화에서 동의하면 에이전트가 실행할 수 있고, 최종 인수(`review`, `approve record`)와 키 생성(`approve keygen`)은 사람이 직접 실행합니다. 두 승인의 차이는 아래 [두 가지 승인](#두-가지-승인)에 있습니다.
 
 ## 작업 흐름과 구성
 
@@ -14,7 +14,7 @@ CraftHelm은 단일 AI 호스트(Claude Code, Codex, Antigravity `agy`·IDE 세�
 2. **구현과 작업 분배 (`checkpoint.mjs`, `route.mjs`, `delegate.mjs`, `memory.mjs`):** 에이전트는 허용 범위(`scope.allow`) 안에서 코드를 수정합니다. `route`는 작업을 `deterministic`·`lightweight`·`standard`·`reasoning` 네 단계로 분류해 `.crafthelm/config.json`의 `host_profiles`·`model_tiers`와 환경 변수(`CRAFTHELM_MODEL_LIGHTWEIGHT`, `CRAFTHELM_MODEL_STANDARD`, `CRAFTHELM_MODEL_REASONING`)에 맞는 모델 힌트를 고릅니다. `delegate run --execute`는 호스트 어댑터로 워커를 실행해 사용량을 실측하고, 세션 내 서브에이전트 결과는 `delegate record`로 받습니다. 위임 기록이 없으면 증거 매니페스트에 `UNOBSERVED`로 남깁니다. 작업 상태는 단일 writer 락과 체크포인트로 관리하며 같은 원인 실패가 3라운드를 넘기면 `BLOCKED_HUMAN_ATTENTION`으로 멈춥니다. 장기 결정과 이력은 Markdown 원문과 `node:sqlite` FTS5 색인(`memory.mjs`)으로 관리합니다.
 3. **실행 검증과 증거 강도 (`verify.mjs`, `impact.mjs`):** `verify`는 보호된 기준선(`policy_base_ref`)에서 검증 규칙을 읽어 `fast`·`unit`·`e2e`·`property`·`differential` 수용 기준과 Diff 기반 신뢰성 규칙(`observe`/`enforce`)을 실행합니다. 다언어(JS/TS·Python·Go·Rust·Java/Kotlin·C#·C/C++·Ruby·PHP) 정적 영향도 분석과 커스텀 분석기(`--analyzer-cmd`)를 결합해 `--selective` 회귀 테스트를 고르고, 전역 설정 변경이나 매칭 0건일 때는 전체 테스트로 돌아갑니다. 통과한 검사가 실제로 변경 코드를 실행했는지와 테스트 약화(삭제·skip·단언 감소) 여부를 `evidence_strength`에 기록하며 `--mutation-probe`를 켜면 변경된 줄을 깨뜨려 통과한 테스트가 실제로 실패하는지도 확인합니다.
 4. **검토 보고서 발행과 교열 (`review-package.mjs`):** `READY_FOR_HUMAN_REVIEW` 단계에 올릴 8개 섹션 보고서(`reports/review-package.md`)를 만들고, 증거 매니페스트와의 수용 기준 일치 여부·깨진 파일 링크·Kouetsu `1.1.0` 기반 3계층 교열 게이트를 점검합니다. 이 교열 게이트는 저장소에 포함된 Kouetsu 번들로 바로 실행됩니다. `EDITORIAL_GATE_FAILED`나 `CRITICAL_CONFIRMATION_BLOCKED`로 차단되면 `.crafthelm/runs/<run_id>/reports/editorial-report.json`의 `findings`와 `critical_confirmations`를 확인해 문구 또는 미해결 항목을 정리한 뒤 `review-package`를 다시 실행합니다.
-5. **사람의 최종 인수 (`approval.mjs`):** AI 에이전트 세션과 비대화형 터미널의 `approve record` 호출을 막고, 지정 승인자의 명시적 결정과 사유만 기록합니다. 저장소에 보호된 승인자 정책(`.crafthelm/approvers.json`)이 있으면 등록된 `actor`의 `ed25519` 서명만 받습니다. 서명을 강제하려면 AI 세션 밖의 터미널에서 `approve keygen --out <개인키_경로> --actor <이름>`으로 키를 만든 뒤 개인키는 저장소 밖에 보관하고, 출력된 공개키 지문을 기본 브랜치의 `.crafthelm/approvers.json`(`"require_signed": true`)에 커밋합니다. 승인 뒤에 코드·계약·증거·보고서·서명이 달라지면 효력을 무효로 판정합니다.
+5. **사람의 최종 인수 (`approval.mjs`):** AI 에이전트 세션과 비대화형 터미널의 `approve record` 호출을 막고, 지정 승인자의 명시적 결정과 사유만 기록합니다. 저장소에 보호된 승인자 정책(`.crafthelm/approvers.json`)이 있으면 등록된 `actor`의 `ed25519` 서명만 받습니다. 서명을 강제하려면 AI 세션 밖의 터미널에서 `approve keygen --out <개인키_경로> --actor <이름>`으로 키를 만든 뒤 개인키는 저장소 밖에 보관하고, 출력된 공개키 지문을 기본 브랜치의 `.crafthelm/approvers.json`(`"require_signed": true`)에 커밋합니다. 인수 결정은 검증된 스냅샷에 대한 것입니다. 인수 뒤에 계약·증거·보고서·서명이 달라지면 효력을 무효로 판정하고, 코드가 더 바뀐 것은 무효로 보지 않고 결정 기록과 `approve verify` 결과에 알립니다.
 
 ## 판정 주체와 한계
 
@@ -26,6 +26,20 @@ CraftHelm은 단일 AI 호스트(Claude Code, Codex, Antigravity `agy`·IDE 세�
 | 최종 인수 | 지정된 사람·승인자 | 검증 결과와 남은 위험을 검토해 승인·수정 요청·반려·추가 검증을 결정하고 책임을 집니다 |
 
 요구 런타임은 Node.js 24 이상입니다. 낮은 버전에서 실행하면 CLI가 필요한 버전을 한 줄로 알리고 멈춥니다.
+
+## 두 가지 승인
+
+이름이 비슷하지만 묻는 것과 할 수 있는 주체가 다릅니다.
+
+| | 계약 승인 | 최종 인수 |
+|---|---|---|
+| 묻는 것 | 이 범위와 수용 기준으로 작업을 시작해도 되는가 | 검증된 결과를 받아들이는가 |
+| 시점 | 작업 전 | 검증과 검토 보고서 발행 뒤 |
+| 명령 | `contract approve`, `start --approve-contract` | `review`(브라우저 검토 화면), `approve record`, `approve batch` |
+| 에이전트 세션에서 | 사용자가 대화에서 동의하면 에이전트가 실행할 수 있습니다. Claude Code는 실행 전에 사용자에게 확인을 묻고, 기록에는 `agent_session` 경로로 남습니다 | 실행되지 않습니다. 사람이 자기 터미널에서 실행합니다 |
+| 남는 기록 | 계약의 `approval`과 승인된 계약의 사본 | 실행별 `approvals/decision.json` |
+
+계약 승인은 작업의 허가이고 결과의 수락이 아닙니다. 계약이 승인되어도 최종 인수는 `PENDING`으로 남습니다. 승인한 뒤 계약을 고치면 승인된 사본과 대조해 실행 시작과 재계획을 막습니다(`contract diff`로 차이 확인).
 
 ## 에이전트의 보고를 믿지 않는 지점
 
@@ -79,7 +93,8 @@ node scripts/crafthelm.mjs verify --repo /path/to/repo --run-id RUN-001 --select
 node scripts/crafthelm.mjs review-package --repo /path/to/repo --run-id RUN-001
 
 # 6) 사람이 보고서를 검토한 뒤 최종 인수 결정 기록
-#    (AI 세션 밖의 대화형 터미널에서 실행. 서명이 없으면 보고서 SHA-256 끝 8자 입력)
+#    (사람이 자기 터미널에서 실행. 서명이 없으면 보고서 SHA-256 끝 8자 입력.
+#     `review --repo /path/to/repo`로 브라우저 검토 화면에서 결정할 수도 있습니다)
 node scripts/crafthelm.mjs approve record \
   --repo /path/to/repo \
   --run-id RUN-001 \
@@ -104,7 +119,7 @@ node scripts/crafthelm.mjs start "로그인 토큰 만료 비교 연산 오류 �
 # 2) 검증 + 검토 보고서 발행 (READY_FOR_HUMAN_REVIEW)
 node scripts/crafthelm.mjs feedback --repo /path/to/repo --run-id CH-T001-RUN-001 --selective
 
-# 3) 사람이 AI 세션 밖의 터미널에서 최종 인수 결정 기록
+# 3) 사람이 자기 터미널에서 최종 인수 결정 기록 (또는 `review --repo /path/to/repo`)
 node scripts/crafthelm.mjs approve record --repo /path/to/repo --run-id CH-T001-RUN-001 \
   --decision ACCEPTED --actor human-reviewer --rationale "검증 증빙 확인 완료"
 ```

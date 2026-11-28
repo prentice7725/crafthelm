@@ -99,23 +99,23 @@ describe('CraftHelm M0 Vertical Slice E2E Tests (Flows A-N)', () => {
         runId: 'RUN-A',
         ...(claudeKouetsuExists ? {} : { kouetsuRoot: path.resolve('hosts/codex/skills/kouetsu') }),
       });
-      if (claudeKouetsuExists) {
-        assert.equal(pkg.ok, true);
-        assert.equal(pkg.state, 'READY_FOR_HUMAN_REVIEW');
-        assert.equal(pkg.editorial_status, 'PASS');
-        assert.equal(fs.existsSync(getApprovalDecisionPath(repo, 'RUN-A')), false);
+      // Checked with either Kouetsu copy. Guarded by the plugin cache, these assertions did not run
+      // where the cache is absent (CI), and the flow passed without its last three stages looked at.
+      assert.equal(pkg.ok, true, JSON.stringify(pkg.editorial_findings ?? pkg.message ?? pkg));
+      assert.equal(pkg.state, 'READY_FOR_HUMAN_REVIEW');
+      assert.equal(pkg.editorial_status, 'PASS');
+      assert.equal(fs.existsSync(getApprovalDecisionPath(repo, 'RUN-A')), false);
 
-        const accepted = recordHumanDecision({
-          repo,
-          runId: 'RUN-A',
-          decision: 'accept',
-          actor: 'chang',
-          rationale: 'All checks and E2E passed',
-        });
-        assert.equal(accepted.ok, true);
-        assert.equal(accepted.state, 'ACCEPTED');
-        assert.equal(verifyHumanDecision({ repo, runId: 'RUN-A' }).valid, true);
-      }
+      const accepted = recordHumanDecision({
+        repo,
+        runId: 'RUN-A',
+        decision: 'accept',
+        actor: 'chang',
+        rationale: 'All checks and E2E passed',
+      });
+      assert.equal(accepted.ok, true);
+      assert.equal(accepted.state, 'ACCEPTED');
+      assert.equal(verifyHumanDecision({ repo, runId: 'RUN-A' }).valid, true);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
