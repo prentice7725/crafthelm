@@ -81,7 +81,7 @@ function printHelp() {
       '  install-skills   Register CraftHelm skill packages into Claude Code, Codex, and Gemini/Antigravity',
       '  interview        Run Source-First intake and generate contract + specs',
       '  contract         validate | plan | add-e2e | add-test | approve an execution contract',
-      '  checkpoint       init | acquire-lock | release-lock | stage | approve-stage | transition | record-repair | resume | handoff | replan | rebaseline | close | status',
+      '  checkpoint       init | acquire-lock | release-lock | stage | approve-stage | transition | record-repair | resume | handoff | replan | rebaseline | consider | close | status',
       '  impact           Run AST + call-graph diff impact analysis and selective test recommendation',
       '  route            Route task to cost-efficient tier (deterministic | lightweight | standard | reasoning)',
       '  delegate         run | record | status: dispatch a worker on the active host and record what actually ran',
