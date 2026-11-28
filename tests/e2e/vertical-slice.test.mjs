@@ -530,7 +530,8 @@ describe('CraftHelm M0 Vertical Slice E2E Tests (Flows A-N)', () => {
       assert.equal(resReplan.ok, false);
       assert.equal(resReplan.error_code, 'REPLAN_REQUIRED');
 
-      approveContractFile(iv.contract_path, 'pm');
+      // The contract was edited by hand after its approval: approving it again means accepting that edit.
+      approveContractFile(iv.contract_path, 'pm', { acceptChanges: true });
       const replanned = replanRun({ repo, runId: 'RUN-H', contract: iv.contract_path, reason: 'Added audit log requirement' });
       assert.equal(replanned.ok, true);
       const cpAfter = JSON.parse(fs.readFileSync(getCheckpointPath(repo, 'RUN-H'), 'utf8'));
@@ -589,6 +590,8 @@ describe('CraftHelm M0 Vertical Slice E2E Tests (Flows A-N)', () => {
       cObj.acceptance[0].command = 'node tests/e2e.mjs';
       cObj.acceptance[1].command = 'node tests/diff-new-bad.mjs';
       fs.writeFileSync(iv.contract_path, JSON.stringify(cObj, null, 2), 'utf8');
+      // A re-plan takes the edited contract only once it has been approved as edited.
+      approveContractFile(iv.contract_path, 'operator', { acceptChanges: true });
       replanRun({ repo, runId: 'RUN-I', contract: iv.contract_path, reason: 'Test unapproved differential divergence' });
 
       const v2 = runVerify({ repo, runId: 'RUN-I' });

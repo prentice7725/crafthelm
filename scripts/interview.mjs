@@ -5,6 +5,7 @@ import { checkContractReadiness } from './contract.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
 import { sha256CanonicalJson, sha256Text } from './lib/crypto.mjs';
 import { withTaskWrite, writeAtomic, writeTaskReceipt } from './lib/task-artifacts.mjs';
+import { writeApprovalRecord } from './lib/contract-approval.mjs';
 import { getGitHead, isGitRepo, runGit } from './lib/git.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
 import { generateInterviewQuestions } from './lib/interview-questions.mjs';
@@ -450,6 +451,8 @@ export function runInterview(options = {}) {
     fs.mkdirSync(path.dirname(contractPath), { recursive: true });
     const contractText = `${JSON.stringify(contract, null, 2)}\n`;
     writeAtomic(contractPath, contractText);
+    // A contract written already approved (--approve-contract) is recorded as approved content too.
+    if (contract.approval?.contract_approved) writeApprovalRecord(repoRoot, contract);
     writeTaskReceipt(repoRoot, taskId, {
       docs_dir: toPosixPath(path.relative(repoRoot, docsAbsDir)),
       docs: docHashes,

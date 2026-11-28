@@ -20,6 +20,7 @@ import {
   toPosixPath,
 } from './lib/paths.mjs';
 import { assertValidSchema } from './lib/schema.mjs';
+import { assertContractIsApprovedCopy } from './lib/contract-approval.mjs';
 import { STATES, WATERFALL_GATED_STAGES, assertTransition, canTransition } from './lib/state-machine.mjs';
 import { assertNoForeignWriterLock, describeLockRelease, readWriterLock } from './lib/writer-lock.mjs';
 
@@ -160,6 +161,8 @@ function initializeCheckpoint(options) {
   if (!contract.approval?.contract_approved) {
     throw new Error('CONTRACT_NOT_APPROVED: Cannot initialize run checkpoint before contract approval');
   }
+  // The flag is in the file itself; what counts is that the file is what was approved.
+  assertContractIsApprovedCopy(repoRoot, contract, 'opening a run');
 
   const runId = options.runId ?? `${contract.task_id}-RUN-001`;
   const runDir = getRunDir(repoRoot, runId);
@@ -733,6 +736,7 @@ export function replanRun(options) {
   if (!contract.approval?.contract_approved) {
     throw new Error('CONTRACT_NOT_APPROVED: Updated contract must be approved before replanning.');
   }
+  assertContractIsApprovedCopy(repoRoot, contract, 'the replan');
 
   const invalidatedStages = ['tasks', 'implementation', 'integration', 'technical_verification', 'review_package', 'human_acceptance'];
   const historyEntry = {
