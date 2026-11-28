@@ -45,6 +45,8 @@
     "repro_conditions": {
       "type": "string"
     },
+    "tree_at_decision_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "changed_since_verification": { "type": "array", "items": { "type": "string", "minLength": 1 } },
     "batch": {
       "type": "object",
       "additionalProperties": false,

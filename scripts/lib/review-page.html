@@ -97,7 +97,7 @@ const runs = () => (state.data ? state.data.groups.flatMap((g) => g.runs) : []);
 const find = (id) => runs().find((r) => r.run_id === id);
 
 const PROBLEM = {
-  STALE_SNAPSHOT: '검증한 뒤 작업 트리가 달라졌습니다. 지금 상태로는 수용할 수 없습니다. 다시 검증해 보고서를 재발행하거나, 이후 작업으로 대체됐다면 닫으세요.',
+  STALE_SNAPSHOT: '검증을 다시 실행했지만 검토 보고서는 다시 발행하지 않았습니다. 보고서가 다른 상태를 설명하고 있어 수용할 수 없습니다. 보고서를 다시 발행하세요.',
   STALE_REPORT: '검증 뒤 검토 보고서 파일이 수정됐습니다. 보고서를 다시 발행해야 수용할 수 있습니다.',
   CONTRACT_MISMATCH: '검증 뒤 실행 계약이 바뀌었습니다. 다시 계획해야 수용할 수 있습니다.',
   EVIDENCE_LOG_ALTERED: '검사 로그가 검증 때와 다릅니다. 다시 검증해야 수용할 수 있습니다.',
@@ -130,6 +130,7 @@ async function load() {
 function tagsOf(run) {
   const tags = [];
   if (!run.acceptable) tags.push('<span class="pill bad">수용 불가</span>');
+  if (run.tree_changed && (run.changed_since === null || run.changed_since.length > 0)) tags.push('<span class="pill warn">이후 변경</span>');
   if (run.requirements.some((q) => q.verdict === 'failed')) tags.push('<span class="pill bad">실패한 검사</span>');
   if (run.requirements.some((q) => q.verdict === 'unverified' || q.verdict === 'partly')) tags.push('<span class="pill warn">미검증 있음</span>');
   if (run.evidence_strength === 'weak') tags.push('<span class="pill warn">증거 약함</span>');
@@ -178,6 +179,14 @@ function renderDetail() {
     + '<span>자동 검증 ' + esc(run.technical_status || '알 수 없음') + '</span>'
     + (run.verified_at ? '<span>검증 ' + esc(new Date(run.verified_at).toLocaleString()) + '</span>' : '') + '</div>';
   for (const p of run.problems) html += '<div class="notice bad">' + esc(PROBLEM[p.code] || p.message) + '</div>';
+  if (run.tree_changed) {
+    const since = run.changed_since;
+    html += '<div class="notice">' + (since === null
+      ? '검증한 뒤 작업 트리가 달라졌습니다. 이 실행은 파일별 기록이 없어 어떤 파일이 달라졌는지는 알 수 없습니다. 수용은 검증 당시의 내용에 대해 기록됩니다.'
+      : since.length === 0
+        ? '검증한 뒤 작업 트리가 달라졌지만, 이 실행이 바꾼 파일은 검증 때와 같습니다.'
+        : '검증한 뒤 이 실행의 파일 ' + since.length + '개가 더 바뀌었습니다: ' + since.map(esc).join(', ') + '. 수용은 검증 당시의 내용에 대해 기록됩니다.') + '</div>';
+  }
 
   html += '<h3>요구와 검사</h3><table>';
   for (const q of run.requirements) {

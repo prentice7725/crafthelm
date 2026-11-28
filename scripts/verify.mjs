@@ -1105,6 +1105,12 @@ export function runVerify(options) {
       status: scopeStatus,
       diff_file: diffRel,
       changed_files: changedFiles,
+      // What each changed file was at verification. A decision made after the tree has moved on
+      // can then say which of this run's files are no longer what was verified.
+      changed_file_hashes: Object.fromEntries(changedFiles.map((rel) => {
+        const abs = path.join(repoRoot, rel);
+        return [rel, fs.existsSync(abs) && fs.statSync(abs).isFile() ? (fileHashes.get(toPosixPath(rel)) ?? sha256File(abs)) : 'DELETED'];
+      })),
       out_of_scope_files: outOfScopeFiles,
       protected_violations: [...protectedViolations].sort(),
       policy_tamper_detected: policy.tamperDetected,

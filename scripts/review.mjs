@@ -116,6 +116,8 @@ export function buildReviewData(options = {}) {
       request: entry.request,
       acceptable: entry.acceptable,
       problems: entry.problems,
+      tree_changed: entry.tree_changed,
+      changed_since: entry.changed_since,
       technical_status: entry.technical_status,
       evidence_strength: manifest.evidence_strength?.level ?? null,
       verified_at: stamp.stamped_at ?? entry.updated_at ?? null,

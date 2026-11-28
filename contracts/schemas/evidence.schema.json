@@ -93,6 +93,7 @@
         "status": { "type": "string", "enum": ["PASS", "FAIL"] },
         "diff_file": { "type": "string", "minLength": 1 },
         "changed_files": { "type": "array", "items": { "type": "string" } },
+        "changed_file_hashes": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^([a-f0-9]{64}|DELETED)$" } },
         "out_of_scope_files": { "type": "array", "items": { "type": "string" } },
         "protected_violations": { "type": "array", "items": { "type": "string" } },
         "policy_tamper_detected": { "type": "boolean" }
