@@ -76,7 +76,7 @@ describe('Batch 1 CLI Safety, Task Isolation, E2E Readiness & Timeout Separation
       const manuallyEdited = JSON.parse(fs.readFileSync(second.contract_path, 'utf8'));
       manuallyEdited.title = 'Operator edit';
       fs.writeFileSync(second.contract_path, JSON.stringify(manuallyEdited), 'utf8');
-      approveContractFile(second.contract_path, 'operator');
+      approveContractFile(second.contract_path, 'operator', { acceptChanges: true });
       const reasons = runVerify({ repo, runId: 'ONE' }).failure_reasons;
       assert.ok(reasons.some(r => r.includes('docs/second/extra.md')));
       assert.ok(reasons.some(r => r.includes(`.crafthelm/contracts/${second.task_id}.json`)));

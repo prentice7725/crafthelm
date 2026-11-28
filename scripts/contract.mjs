@@ -6,6 +6,7 @@ import { sha256CanonicalJson, sha256File, sha256Text } from './lib/crypto.mjs';
 import { cliInvocation, getContractPath, unsupportedGlobSyntax } from './lib/paths.mjs';
 import { readTaskReceipt, withTaskWrite, writeAtomic, writeTaskReceipt } from './lib/task-artifacts.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
+import { compareWithApproved, describeContractDiff, repoOfCanonicalContract, writeApprovalRecord } from './lib/contract-approval.mjs';
 import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } from './lib/lite-profile.mjs';
 import { composeMethodologyPlan } from './lib/methodology.mjs';
 import { assertValidSchema, validateAgainstSchema } from './lib/schema.mjs';
@@ -152,7 +153,7 @@ export function planFromContract(contractPath) {
  * Record explicit contract approval (authorizes execution only, NOT human final acceptance).
  * @param {string} contractPath
  * @param {string} actor
- * @param {{ strictReadiness?: boolean, channel?: 'programmatic'|'agent_session'|'interactive_terminal'|'non_interactive' }} [options]
+ * @param {{ strictReadiness?: boolean, acceptChanges?: boolean, channel?: 'programmatic'|'agent_session'|'interactive_terminal'|'non_interactive' }} [options]
  */
 export function approveContractFile(contractPath, actor, options = {}) {
   return withContractWrite(contractPath, file => approveContract(file, actor, options));
@@ -171,12 +172,27 @@ function approveContract(absPath, actor, options) {
     throw new Error(`CONTRACT_POLICY_NOT_READY: ${details}`);
   }
 
+  // What was approved is kept outside this file, so the contract can be compared with it. A
+  // contract somewhere other than .crafthelm/contracts/<task>.json has no repository to keep it in.
+  const repo = repoOfCanonicalContract(absPath, contract.task_id);
+  const compared = repo ? compareWithApproved(repo, contract) : { status: 'NO_RECORD', record: null, diff: null };
+  // The file says approved but is not what was approved: someone edited it and the flag stayed.
+  // Approving it is approving the changes, which takes having seen them.
+  if (contract.approval?.contract_approved === true && compared.status === 'CHANGED' && !options.acceptChanges) {
+    throw new Error([
+      `CONTRACT_CHANGED_SINCE_APPROVAL: contract ${contract.task_id} is marked approved but is not what "${compared.record.approved_by}" approved at ${compared.record.approved_at}.`,
+      ...describeContractDiff(compared.diff),
+      'To approve the contract as it is now, run the same command with --accept-changes.',
+    ].join('\n'));
+  }
+
   // Approving an approved contract again as the same actor is a no-op. Rewriting the time would
   // change the contract hash, and a run already opened on it would then demand a re-plan.
   const trimmedActor = String(actor).trim();
   const channel = options.channel ?? 'programmatic';
   if (contract.approval?.contract_approved === true && contract.approval.contract_approved_by === trimmedActor
-    && (contract.approval.contract_approved_via ?? 'programmatic') === channel) {
+    && (contract.approval.contract_approved_via ?? 'programmatic') === channel
+    && (compared.status === 'MATCHES' || !repo)) {
     return {
       ok: true,
       already_approved: true,
@@ -188,7 +204,10 @@ function approveContract(absPath, actor, options) {
       approved_via: contract.approval.contract_approved_via ?? 'programmatic',
       policy_ready: readiness.policy_ready,
       warnings: readiness.warnings,
-      note: 'This contract was already approved with this content; nothing was written. A changed request is not in it: rebuild the contract with interview --overwrite, or amend it with contract add-e2e / add-test, and approve the result.',
+      content_checked: compared.status === 'MATCHES',
+      note: compared.status === 'MATCHES'
+        ? 'This contract was already approved and is the same as the approved copy; nothing was written. A changed request is not in it: rebuild the contract with interview --overwrite, or amend it with contract add-e2e / add-test, and approve the result.'
+        : 'This contract was already approved; nothing was written. It is not under .crafthelm/contracts/, so there is no approved copy to compare its content with.',
     };
   }
 
@@ -202,10 +221,13 @@ function approveContract(absPath, actor, options) {
 
   assertValidSchema('execution', contract, absPath);
   persistContract(absPath, contract);
+  if (repo) writeApprovalRecord(repo, contract);
 
   return {
     ok: true,
     task_id: contract.task_id,
+    // What this approval changed relative to the last approved copy, when there was one.
+    ...(compared.status === 'CHANGED' ? { changes_since_last_approval: { weakening: compared.diff.weakening, other: compared.diff.other } } : {}),
     contract_path: absPath,
     contract_sha256: sha256CanonicalJson(contract),
     approved_by: contract.approval.contract_approved_by,
@@ -332,9 +354,12 @@ function printUsage() {
       '  contract.mjs plan     <contractPath>',
       '  contract.mjs add-e2e  <contractPath> --e2e-cmd "<command>" [--docs-dir <dir>]',
       '  contract.mjs add-test <contractPath> --test-cmd "<command>" [--docs-dir <dir>]   (test written for this change, kind "unit")',
-      '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--init-run [--repo <path>] [--run-id <id>] [--baseline-ref <commit>]]',
+      '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--accept-changes] [--init-run [--repo <path>] [--run-id <id>] [--baseline-ref <commit>]]',
+      '  contract.mjs diff     <contractPath>   (what differs from the copy that was approved)',
       '',
       '  --init-run   After approval, also freeze the run baseline (checkpoint init). Implies --strict.',
+      '  --accept-changes  Approve a contract that is marked approved but differs from the approved copy.',
+      '               Without it such a contract is refused and the differences are listed.',
       '  --baseline-ref  With --init-run: start the run at an earlier commit, so work already committed is verified too.',
       '',
     ].join('\n'),
@@ -354,7 +379,7 @@ if (isMainModule(import.meta.url)) {
     ?? (typeof args['task-id'] === 'string' ? getContractPath(path.resolve(typeof args.repo === 'string' ? args.repo : '.'), args['task-id']) : undefined);
 
   try {
-    const known = ['validate', 'plan', 'add-e2e', 'add-test', 'approve'];
+    const known = ['validate', 'plan', 'add-e2e', 'add-test', 'approve', 'diff'];
     if (known.includes(subcommand) && typeof target !== 'string') {
       throw new Error(`contract ${subcommand} needs the contract file: contract ${subcommand} <contractPath>${subcommand === 'approve' ? ' --actor <name> [--init-run --repo <path> --run-id <id>]' : ''} (or --task-id <id> with --repo <path>). Contracts live in .crafthelm/contracts/<task-id>.json.`);
     }
@@ -386,10 +411,29 @@ if (isMainModule(import.meta.url)) {
     } else if (subcommand === 'plan') {
       const res = planFromContract(target);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
+    } else if (subcommand === 'diff') {
+      const contract = JSON.parse(fs.readFileSync(target, 'utf8'));
+      const repo = repoOfCanonicalContract(target, contract.task_id);
+      if (!repo) throw new Error(`contract diff compares .crafthelm/contracts/<task>.json with its approved copy; ${target} is not under a repository's .crafthelm/contracts/.`);
+      const compared = compareWithApproved(repo, contract);
+      const lines = compared.status === 'NO_RECORD'
+        ? [`There is no approved copy of ${contract.task_id}${contract.approval?.contract_approved ? ', although the contract is marked approved' : ''}.`]
+        : [`Approved by "${compared.record.approved_by}" at ${compared.record.approved_at}.`, ...describeContractDiff(compared.diff ?? { changed: false })];
+      process.stderr.write(`${lines.join('\n')}\n`);
+      process.stdout.write(`${JSON.stringify({
+        task_id: contract.task_id,
+        status: compared.status,
+        marked_approved: Boolean(contract.approval?.contract_approved),
+        approved_by: compared.record?.approved_by ?? null,
+        approved_at: compared.record?.approved_at ?? null,
+        weakening: compared.diff?.weakening ?? [],
+        other: compared.diff?.other ?? [],
+      }, null, 2)}\n`);
     } else if (subcommand === 'approve') {
       const channel = classifyApprovalChannel();
       const approve = () => approveContractFile(target, args.actor, {
         strictReadiness: Boolean(args.strict) || Boolean(args['init-run']),
+        acceptChanges: Boolean(args['accept-changes']),
         channel,
       });
       let res;
@@ -408,6 +452,9 @@ if (isMainModule(import.meta.url)) {
         res = approve();
       }
       for (const w of res.warnings ?? []) process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
+      if (res.changes_since_last_approval) {
+        process.stderr.write(`[notice] This approval replaces an earlier approved copy of ${res.task_id}. Changes since then:\n${describeContractDiff({ changed: true, ...res.changes_since_last_approval }).join('\n')}\n`);
+      }
       if (res.already_approved) {
         // With --init-run this is also how an approval whose run was never opened (the command was
         // stopped in between) is finished: the approval stands and only the run is created.
@@ -419,7 +466,7 @@ if (isMainModule(import.meta.url)) {
       }
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else {
-      throw new Error('Usage: contract.mjs <validate|plan|add-e2e|add-test|approve> <contractPath> [options]');
+      throw new Error('Usage: contract.mjs <validate|plan|add-e2e|add-test|approve|diff> <contractPath> [options]');
     }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);

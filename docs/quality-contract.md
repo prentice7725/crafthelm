@@ -187,3 +187,13 @@ Diff hunk와 다언어(JS/TS, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby, P
 - `approve verify`는 트리가 달라졌다는 이유로 결정을 무효로 보지 않는다. 결과의 `tree_matches_decision`이 지금 트리가 그 스냅샷인지를 알려 준다. 보고서, 매니페스트, 로그, 서명이 달라지면 전과 같이 `INVALIDATED`다.
 - `checkpoint resume`도 트리가 달라졌다는 이유만으로 `READY_FOR_HUMAN_REVIEW`나 `ACCEPTED`를 `VERIFYING`으로 되돌리지 않는다. 보고서나 증거가 달라졌으면 전과 같이 되돌린다.
 - 달라지지 않는 것: 검토 보고서는 검증 직후의 트리에서만 발행된다. 수용된 실행이 지금 코드 그대로라는 보장은 수용 기록이 아니라 `tree_matches_decision`과 `changed_since_verification`으로 확인한다.
+
+### 26. 승인된 계약의 사본과 대조 (`scripts/lib/contract-approval.mjs`, `scripts/contract.mjs`, `scripts/checkpoint.mjs`)
+
+- 계약 승인은 계약 파일 안의 표시(`approval.contract_approved`)였다. 파일을 직접 고쳐도 표시는 남으므로, 승인 뒤 수용 기준을 지우거나 검사 명령을 바꾸거나 수정 범위를 넓힌 계약이 승인된 계약으로 읽혔고 그 위에 실행을 열 수 있었다. 같은 사람이 다시 승인하면 내용을 대조하지 않고 "이미 승인됨"이라고 답했다.
+- 승인할 때 계약 본문과 그 해시를 계약 파일 밖(`.crafthelm/runs/.approvals/<task>.json`)에 남긴다. 비교 대상은 누가 언제 승인했는지를 뺀 본문 전체다. `interview`나 `start`가 `--approve-contract`로 승인 상태의 계약을 쓸 때도 같이 남긴다.
+- 승인에 기대는 곳마다 지금 계약을 그 사본과 대조한다. `checkpoint init`(`contract approve --init-run` 포함)과 `checkpoint replan`은 다르면 `CONTRACT_CHANGED_SINCE_APPROVAL`로 멈추고 무엇이 달라졌는지 적는다. 승인 표시는 있는데 사본이 없으면 `CONTRACT_APPROVAL_RECORD_MISSING`으로 멈춘다. 이 변경 전에 승인하고 아직 실행을 열지 않은 계약이 이 경우이며, 한 번 다시 승인하면 된다.
+- 승인 표시가 있는데 사본과 다른 계약을 다시 승인하려면 `--accept-changes`가 필요하다. 없으면 거부하고 차이를 보여 준다. `contract add-e2e`와 `add-test`처럼 표시를 지우는 정식 경로로 고친 계약은 그냥 승인되고, 직전 사본과의 차이가 알림으로 나온다.
+- `contract diff <계약>`은 지금 계약과 승인된 사본의 차이를 보여 준다. "덜 요구하거나 더 허용하는" 변경(수용 기준 삭제, 검사 명령·종류·기대 종료 코드 변경, 적용 제외, `scope.allow` 확대, `scope.protect` 해제, 요구 삭제, 검증 정책·예산 변경)을 나머지와 구분한다.
+- 실행을 연 뒤의 변경은 전과 같이 체크포인트의 `contract_sha256`이 잡는다. 이 절이 막는 것은 승인과 실행 시작 사이, 그리고 재계획 때다.
+- 한계: 사본은 대조할 기록이지 잠금이 아니다. 그 폴더는 스냅샷에서 빠지고 범위 가드가 파일 도구의 쓰기를 막지만, 셸로 쓸 수 있는 프로세스는 사본도 고칠 수 있다. 그 폴더는 git이 무시하므로 저장소를 새로 받은 곳에는 사본이 없고, 실행을 열기 전에 다시 승인해야 한다. `.crafthelm/contracts/` 밖에 있는 계약 파일은 어느 저장소의 것인지 알 수 없어 사본을 남기지 않는다.

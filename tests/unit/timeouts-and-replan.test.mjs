@@ -130,7 +130,7 @@ describe('Contract approval and re-plan leave the records consistent', () => {
 
       const again = approveContractFile(contractPath, 'operator');
       assert.deepEqual([again.already_approved, again.approved_at, again.contract_sha256], [true, first.approved_at, first.contract_sha256]);
-      assert.match(again.note, /already approved with this content; nothing was written\. A changed request is not in it/);
+      assert.match(again.note, /already approved and is the same as the approved copy; nothing was written\. A changed request is not in it/);
       assert.equal(fs.readFileSync(contractPath, 'utf8'), bytes);
       assert.equal(readJson(getCheckpointPath(repo, 'TWICE-RUN')).contract_sha256, again.contract_sha256);
 
