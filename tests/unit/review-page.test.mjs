@@ -95,10 +95,11 @@ describe('Review page: the waiting runs read and decided on one page', () => {
     const repo = makeRepo();
     let server;
     try {
-      // One run reviewed on an older tree, three on the current one.
+      // One run whose report was edited after verification, three that can be accepted.
       const [old, one, two, three] = ['M1-OLD', 'M1B-ONE', 'M1B-TWO', 'M1B-THREE'].map((id) => openRun(repo, id));
       fs.writeFileSync(path.join(repo, 'src', 'app.mjs'), 'export const val = 2;\n', 'utf8');
       toReview(repo, old);
+      fs.appendFileSync(path.join(repo, '.crafthelm', 'runs', old, 'reports', 'review-package.md'), '\nedited\n');
       fs.writeFileSync(path.join(repo, 'src', 'app.mjs'), 'export const val = 3;\nexport const extra = true;\n', 'utf8');
       for (const id of [one, two, three]) toReview(repo, id);
 
@@ -112,7 +113,7 @@ describe('Review page: the waiting runs read and decided on one page', () => {
         ['REQ-02', 'a person checks the output by eye', 'unverified', [['AC-02', 'UNVERIFIED']]],
       ]);
       assert.ok(shown.notes.some((n) => n.kind === 'unverified' && /AC-02/.test(n.text)));
-      assert.deepEqual([data.groups[0].runs[0].acceptable, data.groups[0].runs[0].problems.map((p) => p.code)], [false, ['STALE_SNAPSHOT']]);
+      assert.deepEqual([data.groups[0].runs[0].acceptable, data.groups[0].runs[0].problems.map((p) => p.code)], [false, ['STALE_REPORT']]);
 
       const made = createReviewServer({ repo, actor: 'seung', token: 't'.repeat(48) });
       server = made.server;
@@ -142,7 +143,7 @@ describe('Review page: the waiting runs read and decided on one page', () => {
       assert.equal((await post('accept', { run_ids: [one] }, {})).status, 403);
       assert.equal((await post('accept', { run_ids: [one] }, { Origin: 'http://evil.test' })).status, 403);
       const stale = await post('accept', { run_ids: [one, old] });
-      assert.deepEqual([stale.status, stale.json.error], [409, 'Run "M1-OLD-RUN" cannot be accepted as it stands (STALE_SNAPSHOT).']);
+      assert.deepEqual([stale.status, stale.json.error], [409, 'Run "M1-OLD-RUN" cannot be accepted as it stands (STALE_REPORT).']);
       assert.equal((await post('accept', { run_ids: ['NOPE'] })).status, 409);
       assert.equal((await post('changes', { run_id: three, note: '  ' })).status, 400);
       assert.equal((await post('rewrite', {})).status, 404);

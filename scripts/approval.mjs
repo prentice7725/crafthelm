@@ -75,9 +75,27 @@ function inspectReviewRun(repoRoot, runId, options = {}) {
   // The digest covers the whole tree; a caller deciding several runs computes it once.
   const currentSnapshot = options.currentSnapshot ?? computeSnapshotDigest(repoRoot);
   const problems = [];
-  // H03 / E14: Block approval if snapshot or report changed since READY_FOR_HUMAN_REVIEW
-  if (currentSnapshot !== stamp.target_snapshot_digest || currentSnapshot !== checkpoint.target_snapshot_digest) {
-    problems.push({ code: 'STALE_SNAPSHOT', message: 'Code snapshot changed after review package generation; re-verify and re-publish before approving.' });
+  // A decision is about what was verified: the snapshot in the stamp, the report and the logs,
+  // each bound by hash below. The stamp and the checkpoint must name the same snapshot; if verify
+  // ran again without the package being published again, the package describes another tree.
+  const verifiedSnapshot = stamp.target_snapshot_digest;
+  if (verifiedSnapshot !== checkpoint.target_snapshot_digest) {
+    problems.push({ code: 'STALE_SNAPSHOT', message: 'The run was verified again after its review package was published; publish the package again before approving.' });
+  }
+  // The tree moving on afterwards (the next task was started) does not stand in the way. It is
+  // reported with the decision: which of this run's files are no longer what was verified, when
+  // the manifest recorded their hashes, and otherwise only that the tree differs.
+  const treeChanged = currentSnapshot !== verifiedSnapshot;
+  let changedSince = null;
+  if (treeChanged && manifest.scope?.changed_file_hashes) {
+    changedSince = Object.entries(manifest.scope.changed_file_hashes)
+      .filter(([rel, hash]) => {
+        const abs = path.join(repoRoot, rel);
+        const now = fs.existsSync(abs) && fs.statSync(abs).isFile() ? sha256File(abs) : 'DELETED';
+        return now !== hash;
+      })
+      .map(([rel]) => rel)
+      .sort();
   }
   if (reportSha !== manifest.human_review?.package_sha256) {
     problems.push({ code: 'STALE_REPORT', message: 'review-package.md was modified after verification; re-publish before approving.' });
@@ -89,7 +107,7 @@ function inspectReviewRun(repoRoot, runId, options = {}) {
   if (alteredLogs.length > 0) {
     problems.push({ code: 'EVIDENCE_LOG_ALTERED', message: `${alteredLogs.join('; ')}. Re-run verify and re-publish before approving.` });
   }
-  return { ...base, manifest, stamp, reportSha, currentSnapshot, problems };
+  return { ...base, manifest, stamp, reportSha, currentSnapshot, verifiedSnapshot, treeChanged, changedSince, problems };
 }
 
 /**
@@ -124,7 +142,7 @@ export function recordHumanDecision(options) {
   if (inspected.problems.length > 0) {
     throw new Error(`${inspected.problems[0].code}: ${inspected.problems[0].message}`);
   }
-  const { contract, contractSha, manifestPath, stampPath, manifest, stamp, reportSha, currentSnapshot } = inspected;
+  const { contract, contractSha, manifestPath, stampPath, manifest, stamp, reportSha, currentSnapshot, verifiedSnapshot, treeChanged, changedSince } = inspected;
 
   // Identity gate: evaluated before any artifact is mutated.
   const approversPolicy = loadApproversPolicy(repoRoot, resolvePolicyBaseRef(contract, checkpoint));
@@ -182,7 +200,10 @@ export function recordHumanDecision(options) {
     contract_sha256: contractSha,
     report_sha256: reportSha,
     evidence_manifest_sha256: finalManifestSha,
-    target_snapshot_digest: currentSnapshot,
+    target_snapshot_digest: verifiedSnapshot,
+    // Present when the tree was no longer the verified one at the time of the decision.
+    ...(treeChanged ? { tree_at_decision_digest: currentSnapshot } : {}),
+    ...(treeChanged && changedSince ? { changed_since_verification: changedSince } : {}),
     decision: normalizedDecision,
     actor,
     recorded_at: new Date().toISOString(),
@@ -228,7 +249,9 @@ export function recordHumanDecision(options) {
     decision: normalizedDecision,
     state: targetState,
     decision_file: 'approvals/decision.json',
-    target_snapshot_digest: currentSnapshot,
+    target_snapshot_digest: verifiedSnapshot,
+    tree_changed_since_verification: treeChanged,
+    ...(treeChanged ? { changed_since_verification: changedSince } : {}),
     report_sha256: reportSha,
     verification_type: record.verification_type,
     identity: evaluateDecisionIdentity(record, approversPolicy).identity,
@@ -264,9 +287,9 @@ export function verifyHumanDecision(options) {
   if (decision.contract_sha256 !== currentContractSha) {
     mismatches.push('contract_sha256 changed after decision');
   }
-  if (decision.target_snapshot_digest !== currentSnapshot) {
-    mismatches.push('target_snapshot_digest changed after decision');
-  }
+  // The decision names the snapshot that was verified. The tree moving on does not undo it; the
+  // result says whether the tree is still that snapshot.
+  const treeMatches = decision.target_snapshot_digest === currentSnapshot;
   if (!fs.existsSync(reportPath) || sha256File(reportPath) !== decision.report_sha256) {
     mismatches.push('report_sha256 changed after decision');
   }
@@ -309,6 +332,7 @@ export function verifyHumanDecision(options) {
     recorded_at: decision.recorded_at,
     verification_type: decision.verification_type,
     identity: identity.identity,
+    tree_matches_decision: treeMatches,
     mismatches: [],
   };
 }
@@ -353,6 +377,8 @@ export function listReviewQueue(options = {}) {
       package_sha256: inspected.reportSha ?? null,
       acceptable: inspected.problems.length === 0,
       problems: inspected.problems,
+      tree_changed: Boolean(inspected.treeChanged),
+      changed_since: inspected.changedSince ?? null,
     };
   });
   return { repo: repoRoot, current_snapshot: currentSnapshot, runs };
@@ -397,14 +423,15 @@ export async function runReviewDesk(options) {
   write(`${queue.runs.length} run${queue.runs.length === 1 ? '' : 's'} waiting for a human decision in ${repoRoot}\n\n`);
   queue.runs.forEach((run, i) => {
     const request = run.request ? (run.request.length > 90 ? `${run.request.slice(0, 87)}...` : run.request) : '(request unavailable)';
-    write(`  ${String(i + 1).padStart(2)}. ${run.run_id}  [${run.acceptable ? 'ready to decide' : `cannot be accepted: ${run.problems.map((p) => p.code).join(', ')}`}]\n`);
+    const moved = !run.tree_changed ? '' : run.changed_since === null ? '; the tree has changed since' : run.changed_since.length === 0 ? '; the tree has changed since, this run\'s files have not' : `; ${run.changed_since.length} of its files changed since`;
+    write(`  ${String(i + 1).padStart(2)}. ${run.run_id}  [${run.acceptable ? `ready to decide${moved}` : `cannot be accepted: ${run.problems.map((p) => p.code).join(', ')}`}]\n`);
     write(`      ${request}\n`);
     if (run.package_path) write(`      checks: ${run.technical_status ?? 'unknown'} | package: ${run.package_path}${run.package_sha256 ? ` (sha256 ...${run.package_sha256.slice(-8)})` : ''}\n`);
   });
   const acceptable = queue.runs.map((run, i) => (run.acceptable ? i : -1)).filter((i) => i >= 0);
   const blocked = queue.runs.map((run, i) => (run.acceptable ? -1 : i)).filter((i) => i >= 0);
   if (blocked.length > 0) {
-    write('\nA run that cannot be accepted was verified on a tree that has since changed, or its files changed. Verify it again and publish its package, or close it if later work replaced it.\n');
+    write('\nA run that cannot be accepted has a report, contract or evidence that no longer matches what was verified. Verify it again and publish its package, or close it if later work replaced it.\n');
   }
   write('\n');
 

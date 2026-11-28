@@ -631,10 +631,9 @@ export function resumeRun(options) {
     const reportPath = getReviewPackagePath(repoRoot, runId);
     const decisionPath = getApprovalDecisionPath(repoRoot, runId);
 
+    // A review or an acceptance is about the verified snapshot. The tree moving on afterwards does
+    // not make it stale; a report, a log or a decision that no longer matches does.
     const staleReasons = [];
-    if (currentSnapshot !== checkpoint.target_snapshot_digest) {
-      staleReasons.push('target_snapshot_digest changed since review/acceptance');
-    }
     if (!fs.existsSync(manifestPath) || !fs.existsSync(reportPath)) {
       staleReasons.push('missing evidence-manifest.json or review-package.md');
     } else {
@@ -652,7 +651,7 @@ export function resumeRun(options) {
         } else {
           const decision = readJson(decisionPath);
           if (
-            decision.target_snapshot_digest !== currentSnapshot ||
+            decision.target_snapshot_digest !== checkpoint.target_snapshot_digest ||
             decision.report_sha256 !== reportSha ||
             decision.evidence_manifest_sha256 !== sha256File(manifestPath)
           ) {

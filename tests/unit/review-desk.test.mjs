@@ -75,11 +75,13 @@ function operator(answers) {
   return { ask, asked };
 }
 
-// One run reviewed on an older tree, two reviewed on the current one.
+// One run whose report was edited after verification, two that can be accepted.
 function threeWaitingRuns(repo) {
   const [old, first, second] = ['OLD', 'ONE', 'TWO'].map((id) => openRun(repo, id));
   fs.writeFileSync(path.join(repo, 'src', 'app.mjs'), 'export const val = 2;\n', 'utf8');
   toReview(repo, old);
+  // Its report is edited afterwards: the one thing that still stops an acceptance.
+  fs.appendFileSync(path.join(repo, '.crafthelm', 'runs', old, 'reports', 'review-package.md'), '\nedited\n');
   fs.writeFileSync(path.join(repo, 'src', 'app.mjs'), 'export const val = 3;\n', 'utf8');
   toReview(repo, first);
   toReview(repo, second);
@@ -94,7 +96,7 @@ describe('Review desk: the waiting runs decided in one sitting', () => {
       const queue = listReviewQueue({ repo });
       assert.deepEqual(
         queue.runs.map((r) => [r.run_id, r.acceptable, r.problems.map((p) => p.code)]),
-        [[old, false, ['STALE_SNAPSHOT']], [first, true, []], [second, true, []]],
+        [[old, false, ['STALE_REPORT']], [first, true, []], [second, true, []]],
       );
       assert.deepEqual(
         [queue.runs[1].request, queue.runs[1].technical_status, queue.runs[1].package_path],
@@ -130,7 +132,7 @@ describe('Review desk: the waiting runs decided in one sitting', () => {
       ]);
       assert.deepEqual(res.closed, [{ run_id: old, previous_state: 'READY_FOR_HUMAN_REVIEW' }]);
       const screen = shown.join('');
-      assert.match(screen, /1\. OLD-RUN {2}\[cannot be accepted: STALE_SNAPSHOT\]/);
+      assert.match(screen, /1\. OLD-RUN {2}\[cannot be accepted: STALE_REPORT\]/);
       assert.match(screen, /2\. ONE-RUN {2}\[ready to decide\]\n {6}Change val for ONE\n {6}checks: VERIFIED \| package: \.crafthelm\/runs\/ONE-RUN\/reports\/review-package\.md \(sha256 \.\.\.[a-f0-9]{8}\)/);
       assert.ok(screen.includes(`Confirmation code for these review packages: ${code}`));
 
@@ -164,7 +166,7 @@ describe('Review desk: the waiting runs decided in one sitting', () => {
       const desk = (answers) => runReviewDesk({ repo, actor: 'seung', rationale: 'ok', ask: operator(answers).ask, write: () => {} });
 
       await assert.rejects(desk([[/^Accept which/, '2'], [/^Close which/, ''], [/^Type the confirmation code/, 'deadbeef']]), /HUMAN_GATE_CONFIRMATION_MISMATCH: confirmation code did not match; nothing was recorded\./);
-      await assert.rejects(desk([[/^Accept which/, '1 2'], [/^Close which/, '']]), /REVIEW_DESK_SELECTION_INVALID: OLD-RUN cannot be accepted as it stands \(STALE_SNAPSHOT\); nothing was recorded\./);
+      await assert.rejects(desk([[/^Accept which/, '1 2'], [/^Close which/, '']]), /REVIEW_DESK_SELECTION_INVALID: OLD-RUN cannot be accepted as it stands \(STALE_REPORT\); nothing was recorded\./);
       await assert.rejects(desk([[/^Accept which/, '7']]), /REVIEW_DESK_SELECTION_INVALID: "7" is not a number from the list \(1-3\)/);
       await assert.rejects(desk([[/^Accept which/, '2'], [/^Close which/, '1-2']]), /ONE-RUN was chosen both to accept and to close/);
       await assert.rejects(desk([[/^Accept which/, ''], [/^Close which/, '1'], [/^Reason for closing/, 'old'], [/^Type CLOSE/, 'yes']]), /closing was not confirmed; nothing was recorded\./);

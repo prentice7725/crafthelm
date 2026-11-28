@@ -41,9 +41,11 @@ export function recommendNextActionForRun(runSummary, repoArg = '.') {
 
   if (state === STATES.READY_FOR_HUMAN_REVIEW) {
     if (runSummary.snapshot_stale) {
+      // The tree has moved on since this run was verified. It can still be decided: the decision
+      // is recorded for the verified snapshot, and the review page shows what changed since.
       return {
-        next_action: '작업 트리가 변경되어 스냅샷이 stale 상태입니다. 재검증을 실행한 뒤 검토 보고서를 다시 발행하세요. 이후 작업으로 대체된 실행이면 수용 없이 닫을 수 있습니다(checkpoint close --run-id <id> --reason "<사유>").',
-        next_command: `${cliInvocation()} verify --repo ${repoFlag} --run-id ${runId}`,
+        next_action: '기술 검증과 검토 보고서가 준비되었습니다. 검증 뒤 작업 트리가 달라졌지만 결정할 수 있습니다. 수용은 검증된 내용에 대해 기록되고, 검토 화면이 이후 달라진 파일을 보여 줍니다.',
+        next_command: `${cliInvocation()} review --repo ${repoFlag}`,
       };
     }
     return {

@@ -171,11 +171,11 @@ describe('Batch 2 crafthelm start & crafthelm status', () => {
       assert.equal(readyHuman.selected_run.snapshot_stale, false);
       assert.match(readyHuman.next_command, /approve record .* --run-id RUN-01 --decision ACCEPTED/);
 
-      // Edit file after review -> snapshot_stale triggers re-verify recommendation
+      // Edit file after review: the run can still be decided, so status points at the review page
       fs.writeFileSync(path.join(repo, 'src/app.mjs'), 'export const value = 3;\n', 'utf8');
       const staleStatus = getWorkspaceStatus({ repo });
       assert.equal(staleStatus.selected_run.snapshot_stale, true);
-      assert.match(staleStatus.next_command, /verify --repo .* --run-id RUN-01$/);
+      assert.match(staleStatus.next_command, / review --repo /);
 
       // Re-verify, republish, and accept -> terminal moves to idle with terminal_runs history
       assert.equal(transitionCheckpoint({ repo, runId: 'RUN-01', to: STATES.VERIFYING }).ok, true);
