@@ -138,6 +138,7 @@ function tagsOf(run) {
   if (run.requirements.some((q) => q.verdict === 'failed')) tags.push('<span class="pill bad">실패한 검사</span>');
   if (run.requirements.some((q) => q.verdict === 'unverified' || q.verdict === 'partly')) tags.push('<span class="pill warn">미검증 있음</span>');
   if (run.evidence_strength === 'weak') tags.push('<span class="pill warn">증거 약함</span>');
+  if (run.considerations && run.considerations.length > 0) tags.push('<span class="pill">추가 고려 ' + run.considerations.length + '</span>');
   return tags.join('');
 }
 
@@ -219,6 +220,10 @@ function renderDetail() {
   }
   html += '</table>';
 
+  if (run.considerations && run.considerations.length > 0) {
+    html += '<h3>추가 고려 (에이전트가 구현하지 않고 남긴 것)</h3><div class="check">검증된 내용이 아니라 에이전트의 의견입니다. 필요하면 별도 작업으로 맡기세요.</div>'
+      + run.considerations.map((c) => '<div class="note">' + esc(c.note) + (c.why ? ' <span style="color:var(--text-3)">— ' + esc(c.why) + '</span>' : '') + '</div>').join('');
+  }
   if (run.notes.length > 0) html += '<h3>확인이 필요한 것</h3>' + run.notes.map((n) => '<div class="note">' + esc(n.text) + '</div>').join('');
 
   html += '<h3>바뀐 파일</h3><div class="files">' + (run.changed_files.map(esc).join('<br>') || '(없음)') + '</div>'

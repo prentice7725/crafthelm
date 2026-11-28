@@ -22,6 +22,7 @@ import {
 import { assertValidSchema } from './lib/schema.mjs';
 import { assertContractIsApprovedCopy } from './lib/contract-approval.mjs';
 import { appendTrialRecord, assessAcceptanceTrial } from './lib/acceptance-trial.mjs';
+import { addConsideration } from './lib/considerations.mjs';
 import { STATES, WATERFALL_GATED_STAGES, assertTransition, canTransition } from './lib/state-machine.mjs';
 import { assertNoForeignWriterLock, describeLockRelease, readWriterLock } from './lib/writer-lock.mjs';
 
@@ -869,7 +870,7 @@ function printUsage() {
     [
       'CraftHelm Checkpoint CLI (Run Lifecycle State, Single-Writer Lock, Handoff & Replan)',
       '',
-      'Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|close|status|audit> --repo <path> --run-id <id> [options]',
+      'Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|consider|close|status|audit> --repo <path> --run-id <id> [options]',
       '',
       '  init --repo <path> --contract <contractPath> [--run-id <id>] [--baseline-ref <commit>]',
       '       --baseline-ref  Start the run at an earlier commit, so work already committed is verified too.',
@@ -877,6 +878,9 @@ function printUsage() {
       '       Re-freeze the baseline of tooling files (skill installs, .crafthelm/skills.lock.json,',
       '       .crafthelm/config.json, .claude/settings.json, GEMINI.md) after you updated them mid-run,',
       '       so verify stops counting that update as SCOPE_VIOLATION. Run it yourself, outside an AI session.',
+      '  consider --repo <path> --run-id <id> --note "<one line>" [--why "<one line>"]',
+      '       Leave something that looked needed and was not built for the person who reviews the run,',
+      '       instead of building it or widening the contract. Shown on the review page as a remark.',
       '  close --repo <path> --run-id <id>[,<id>...] --reason "<text>" [--superseded-by <run-id>] [--actor <name>]',
       '       Close runs without an acceptance decision, for work that later runs replaced or that is no',
       '       longer wanted. This is not acceptance: no decision record is written. Nothing is closed',
@@ -914,6 +918,7 @@ if (isMainModule(import.meta.url)) {
     else if (sub === 'handoff') out = createHandoff({ repo: args.repo, runId: args['run-id'], docsDir: args['docs-dir'] });
     else if (sub === 'replan') out = replanRun({ repo: args.repo, runId: args['run-id'], contract: args.contract, reason: args.reason, writer: args.writer });
     else if (sub === 'rebaseline') out = rebaselineToolingFiles({ repo: args.repo, runId: args['run-id'], reason: args.reason, writer: args.writer, docsDir: args['docs-dir'] });
+    else if (sub === 'consider') out = addConsideration(path.resolve(args.repo ?? '.'), args['run-id'], { note: args.note, why: typeof args.why === 'string' ? args.why : undefined });
     else if (sub === 'close') {
       const runIds = [...new Set(String(args['run-id']).split(',').map((id) => id.trim()).filter(Boolean))];
       const closeOptions = (runId) => ({
@@ -927,7 +932,7 @@ if (isMainModule(import.meta.url)) {
       out = { ok: true, closed: closed.map((c) => ({ run_id: c.run_id, previous_state: c.closure.previous_state })), closed_via: closed[0]?.closure.closed_via ?? null };
     }
     else if (sub === 'status' || sub === 'audit') out = statusCheckpoint({ repo: args.repo, runId: args['run-id'] });
-    else throw new Error('Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|close|status|audit> ...');
+    else throw new Error('Usage: checkpoint.mjs <init|acquire-lock|release-lock|stage|approve-stage|transition|record-repair|resume|handoff|replan|rebaseline|consider|close|status|audit> ...');
 
     process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     if (out && out.ok === false) process.exit(1);

@@ -7,6 +7,7 @@ import readline from 'node:readline/promises';
 import { listReviewQueue, recordHumanDecision } from './approval.mjs';
 import { closeRun } from './checkpoint.mjs';
 import { isHelpRequested, isMainModule, parseArgs } from './lib/cli.mjs';
+import { readConsiderations } from './lib/considerations.mjs';
 import { assertHumanInteractive } from './lib/human-gate.mjs';
 import { getCheckpointPath, getContractPath, getEvidenceManifestPath, getRunDir, getVerificationStampPath } from './lib/paths.mjs';
 
@@ -118,6 +119,7 @@ export function buildReviewData(options = {}) {
       problems: entry.problems,
       zone: entry.zone,
       trial: entry.trial,
+      considerations: readConsiderations(queue.repo, entry.run_id),
       tree_changed: entry.tree_changed,
       changed_since: entry.changed_since,
       technical_status: entry.technical_status,

@@ -227,7 +227,7 @@ export function evaluateWrite(params) {
   const allowed = [...new Set(scopes.flatMap((s) => s.allow))].join(', ');
   return deny(
     'OUT_OF_SCOPE',
-    `${rel} is outside scope.allow (${allowed}) of the active run ${scopes.map((s) => s.run_id).join(', ')}. verify would fail with SCOPE_VIOLATION. Keep the change inside the scope, or stop and ask for the contract to be re-planned.`,
+    `${rel} is outside scope.allow (${allowed}) of the active run ${scopes.map((s) => s.run_id).join(', ')}. verify would fail with SCOPE_VIOLATION. Keep the change inside the scope. If the change outside it only looks useful, leave it as a consideration for the reviewer (checkpoint consider --run-id <run> --note "<one line>"); if the task cannot be done without it, stop and ask for the contract to be re-planned.`,
   );
 }
 
@@ -284,6 +284,9 @@ export function describeSessionStatus(params) {
         const said = decision.rationale.length > 800 ? `${decision.rationale.slice(0, 800)}...` : decision.rationale;
         out.push(`  The reviewer (${decision.actor}) asked for changes: ${JSON.stringify(said)}. Make them inside the scope, then verify again.`);
       }
+    }
+    if (!WAITING_ON_A_PERSON[run.state]) {
+      out.push(`  Something looks needed that the contract does not ask for? Do not build it and do not widen the contract: leave one line for the reviewer with ${cli} checkpoint consider ${repoFlag} --run-id ${run.run_id} --note "<what, in one line>".`);
     }
     if (run.state === STATES.READY_FOR_HUMAN_REVIEW) out.push(reviewLine);
     out.push(`  What failed and what is next: ${cli} status ${repoFlag} --run-id ${run.run_id} --explain`);
