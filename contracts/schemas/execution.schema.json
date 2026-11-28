@@ -127,7 +127,7 @@
         "contract_approved_at": { "type": "string", "minLength": 1 },
         "contract_approved_via": {
           "type": "string",
-          "enum": ["programmatic", "agent_session", "interactive_terminal", "non_interactive"]
+          "enum": ["programmatic", "agent_session", "interactive_terminal", "non_interactive", "standing_rule"]
         },
         "require_on": {
           "type": "array",

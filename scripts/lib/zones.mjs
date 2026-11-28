@@ -41,7 +41,7 @@ function normalizeStrict(list) {
  * @returns {{ present: boolean, source: string, strict: Array<{ path: string, reason: string }>, digest: string|null, decided_by?: string, decided_at?: string }}
  */
 export function loadZonesPolicy(repoRoot, baseRef) {
-  const absent = { present: false, source: 'none', strict: [], digest: null };
+  const absent = { present: false, source: 'none', strict: [], digest: null, light_contracts: 'ask', light_contracts_decided_by: null };
   if (!baseRef || baseRef === 'UNBORN' || baseRef === 'NO_GIT' || !isGitRepo(repoRoot)) return absent;
   const atRef = readFileAtRef(repoRoot, baseRef, ZONES_POLICY_PATH);
   if (!atRef.exists) return absent;
@@ -54,6 +54,10 @@ export function loadZonesPolicy(repoRoot, baseRef) {
     digest: sha256Text(atRef.content.replace(/\r\n/g, '\n')),
     decided_by: parsed.decided_by,
     decided_at: parsed.decided_at,
+    // How a contract that cannot reach a strict zone is started: 'ask' the user each time (the
+    // default), or under the project's 'standing' rule.
+    light_contracts: parsed.light_contracts?.mode === 'standing' ? 'standing' : 'ask',
+    light_contracts_decided_by: parsed.light_contracts?.decided_by ?? null,
   };
 }
 
@@ -131,4 +135,68 @@ export function inspectZones(repoRoot) {
     status = sha256Text(text) === committed.digest ? 'COMMITTED' : 'DIFFERS_FROM_HEAD';
   } else if (!working && committed.present) status = 'DIFFERS_FROM_HEAD';
   return { status, working, committed };
+}
+
+/**
+ * Switch how light contracts are started, keeping the strict zones as they are. Redefining the
+ * zones with `writeZones` puts the switch back to 'ask': a new set of zones is a new decision.
+ * @param {string} repoRoot
+ * @param {{ mode: 'ask'|'standing', actor: string, channel?: string }} options
+ */
+export function setLightContracts(repoRoot, options) {
+  const actor = typeof options.actor === 'string' ? options.actor.trim() : '';
+  if (!actor) throw new Error('zones set-light needs --actor <name>: the person who decided it.');
+  if (options.mode !== 'ask' && options.mode !== 'standing') throw new Error('zones set-light needs --mode ask or --mode standing.');
+  const zones = readWorkingZones(repoRoot);
+  if (!zones) throw new Error('ZONES_UNDEFINED: this project has not decided its strict zones. A standing rule for light contracts needs to know what is strict first: run zones set.');
+  zones.light_contracts = { mode: options.mode, decided_by: actor, decided_at: new Date().toISOString(), decided_via: options.channel ?? 'programmatic' };
+  assertValidSchema('zones', zones, ZONES_POLICY_PATH);
+  writeAtomic(path.join(repoRoot, ZONES_POLICY_PATH), `${JSON.stringify(zones, null, 2)}\n`);
+  return zones;
+}
+
+// The part of a pattern before its first wildcard: every path the pattern matches starts with it.
+function literalPrefix(pattern) {
+  const norm = toPosixPath(pattern);
+  const at = norm.search(/[*?]/);
+  return at < 0 ? norm : norm.slice(0, at);
+}
+
+/**
+ * The pairs of scope pattern and strict zone that could match the same file. Two patterns are kept
+ * apart only when their fixed beginnings diverge; anything less certain counts as reachable, so
+ * `src/**` reaches `src/schemas/**` and a pattern starting with a wildcard reaches everything.
+ * @param {string[]} scopeAllow
+ * @param {Array<{ path: string, reason: string }>} strict
+ */
+export function scopeMayTouchStrict(scopeAllow, strict) {
+  const pairs = [];
+  for (const allow of scopeAllow ?? []) {
+    const a = literalPrefix(allow);
+    for (const zone of strict) {
+      const z = literalPrefix(zone.path);
+      if (a.startsWith(z) || z.startsWith(a)) pairs.push({ allow, strict: zone.path });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * May a contract be started under the project's standing rule, without asking the user?
+ * Judged by the zones committed at HEAD, where the run's baseline will be.
+ * @returns {{ eligible: boolean, reasons: string[], overlaps: Array<{ allow: string, strict: string }>, policy: ReturnType<typeof loadZonesPolicy> }}
+ */
+export function assessStandingStart(repoRoot, contract) {
+  const policy = loadZonesPolicy(repoRoot, 'HEAD');
+  const reasons = [];
+  const allow = Array.isArray(contract.scope?.allow) ? contract.scope.allow : [];
+  let overlaps = [];
+  if (!policy.present) reasons.push('ZONES_UNDEFINED');
+  else {
+    if (policy.light_contracts !== 'standing') reasons.push('LIGHT_CONTRACTS_ASK');
+    if (allow.length === 0) reasons.push('SCOPE_EMPTY');
+    overlaps = scopeMayTouchStrict(allow, policy.strict);
+    if (overlaps.length > 0) reasons.push('SCOPE_MAY_TOUCH_STRICT');
+  }
+  return { eligible: reasons.length === 0, reasons, overlaps, policy };
 }

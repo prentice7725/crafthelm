@@ -7,6 +7,7 @@ import { cliInvocation, getContractPath, unsupportedGlobSyntax } from './lib/pat
 import { readTaskReceipt, withTaskWrite, writeAtomic, writeTaskReceipt } from './lib/task-artifacts.mjs';
 import { classifyApprovalChannel } from './lib/human-gate.mjs';
 import { compareWithApproved, describeContractDiff, repoOfCanonicalContract, writeApprovalRecord } from './lib/contract-approval.mjs';
+import { assessStandingStart } from './lib/zones.mjs';
 import { LITE_ELIGIBLE_CHANGE_KINDS, isLiteContract, liteExemptsE2eByContract } from './lib/lite-profile.mjs';
 import { composeMethodologyPlan } from './lib/methodology.mjs';
 import { assertValidSchema, validateAgainstSchema } from './lib/schema.mjs';
@@ -239,6 +240,44 @@ function approveContract(absPath, actor, options) {
   };
 }
 
+const STANDING_REFUSAL = {
+  ZONES_UNDEFINED: 'this project has not decided and committed its strict zones',
+  LIGHT_CONTRACTS_ASK: 'this project has its contracts approved by the user (zones set-light --mode standing would change that; it is the user\'s decision)',
+  SCOPE_EMPTY: 'the contract allows no path',
+  SCOPE_MAY_TOUCH_STRICT: 'the contract\'s scope can reach a strict zone',
+};
+
+/**
+ * Start a contract under the project's standing rule for light contracts, without asking the user.
+ * It works only when the project switched the rule on and the contract's scope cannot reach a
+ * strict zone; otherwise it refuses and the contract goes to the user as before. The contract is
+ * recorded as started by the rule, not as approved by a person.
+ * @param {string} contractPath
+ * @returns {ReturnType<typeof approveContract> & { standing_rule: object }}
+ */
+export function beginUnderStandingRule(contractPath) {
+  return withContractWrite(contractPath, (file) => {
+    const contract = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assertValidSchema('execution', contract, file);
+    const repo = repoOfCanonicalContract(file, contract.task_id);
+    if (!repo) throw new Error(`STANDING_START_REFUSED: ${file} is not under a repository's .crafthelm/contracts/. Ask the user to approve it: contract approve.`);
+    if (contract.approval?.contract_approved) {
+      throw new Error(`CONTRACT_ALREADY_APPROVED: contract ${contract.task_id} is already approved; open its run with checkpoint init.`);
+    }
+    const assessed = assessStandingStart(repo, contract);
+    if (!assessed.eligible) {
+      const why = assessed.reasons.map((code) => `${code}: ${STANDING_REFUSAL[code]}${code === 'SCOPE_MAY_TOUCH_STRICT' ? ` (${assessed.overlaps.map((o) => `${o.allow} reaches ${o.strict}`).join('; ')})` : ''}`);
+      throw new Error([
+        `STANDING_START_REFUSED: contract ${contract.task_id} is not started without the user.`,
+        ...why.map((line) => `  - ${line}`),
+        'Show the user the scope and the acceptance checks, and on their go-ahead run: contract approve <contractPath> --actor <name> --init-run.',
+      ].join('\n'));
+    }
+    const res = approveContract(file, `standing rule (set by ${assessed.policy.light_contracts_decided_by})`, { strictReadiness: true, channel: 'standing_rule' });
+    return { ...res, note: 'Started under the project\'s standing rule for light contracts; no person approved this contract. Final human acceptance remains PENDING.', standing_rule: { set_by: assessed.policy.light_contracts_decided_by, zones_source: assessed.policy.source, zones_digest: assessed.policy.digest } };
+  });
+}
+
 function withContractWrite(contractPath, action) {
   const file = path.resolve(contractPath);
   const repo = path.resolve(path.dirname(file), '../..');
@@ -356,6 +395,10 @@ function printUsage() {
       '  contract.mjs add-test <contractPath> --test-cmd "<command>" [--docs-dir <dir>]   (test written for this change, kind "unit")',
       '  contract.mjs approve  <contractPath> --actor <name> [--strict] [--accept-changes] [--init-run [--repo <path>] [--run-id <id>] [--baseline-ref <commit>]]',
       '  contract.mjs diff     <contractPath>   (what differs from the copy that was approved)',
+      '  contract.mjs begin    <contractPath> [--repo <path>] [--run-id <id>] [--baseline-ref <commit>]',
+      '                        Start a contract under the project\'s standing rule, without an approval prompt.',
+      '                        Works only when the project switched the rule on (zones set-light) and the scope',
+      '                        cannot reach a strict zone; otherwise it refuses and says to ask the user.',
       '',
       '  --init-run   After approval, also freeze the run baseline (checkpoint init). Implies --strict.',
       '  --accept-changes  Approve a contract that is marked approved but differs from the approved copy.',
@@ -379,7 +422,7 @@ if (isMainModule(import.meta.url)) {
     ?? (typeof args['task-id'] === 'string' ? getContractPath(path.resolve(typeof args.repo === 'string' ? args.repo : '.'), args['task-id']) : undefined);
 
   try {
-    const known = ['validate', 'plan', 'add-e2e', 'add-test', 'approve', 'diff'];
+    const known = ['validate', 'plan', 'add-e2e', 'add-test', 'approve', 'diff', 'begin'];
     if (known.includes(subcommand) && typeof target !== 'string') {
       throw new Error(`contract ${subcommand} needs the contract file: contract ${subcommand} <contractPath>${subcommand === 'approve' ? ' --actor <name> [--init-run --repo <path> --run-id <id>]' : ''} (or --task-id <id> with --repo <path>). Contracts live in .crafthelm/contracts/<task-id>.json.`);
     }
@@ -410,6 +453,20 @@ if (isMainModule(import.meta.url)) {
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'plan') {
       const res = planFromContract(target);
+      process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
+    } else if (subcommand === 'begin') {
+      const { withNewRun } = await import('./checkpoint.mjs');
+      const repo = typeof args.repo === 'string' ? args.repo : '.';
+      const runId = typeof args['run-id'] === 'string' ? args['run-id'] : `${validateContractFile(target).contract.task_id}-RUN-001`;
+      const res = withNewRun(repo, runId, (initialize) => {
+        const result = beginUnderStandingRule(target);
+        const cp = initialize({ contract: result.contract_path, baselineRef: typeof args['baseline-ref'] === 'string' ? args['baseline-ref'] : undefined });
+        result.run = { run_id: cp.run_id, initialized: true, state: cp.state, baseline_git_head: cp.baseline_git_head };
+        result.next_command = `${cliInvocation()} feedback --repo "${repo}" --run-id ${cp.run_id}`;
+        return result;
+      });
+      for (const w of res.warnings ?? []) process.stderr.write(`[warning] ${w.code}: ${w.message}\n`);
+      process.stderr.write(`[notice] Contract ${res.task_id} was started under the project's standing rule (set by ${res.standing_rule.set_by}); nobody approved it individually, and the review page says so.\n`);
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else if (subcommand === 'diff') {
       const contract = JSON.parse(fs.readFileSync(target, 'utf8'));
@@ -466,7 +523,7 @@ if (isMainModule(import.meta.url)) {
       }
       process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
     } else {
-      throw new Error('Usage: contract.mjs <validate|plan|add-e2e|add-test|approve|diff> <contractPath> [options]');
+      throw new Error('Usage: contract.mjs <validate|plan|add-e2e|add-test|approve|diff|begin> <contractPath> [options]');
     }
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
